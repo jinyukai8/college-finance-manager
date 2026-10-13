@@ -8,6 +8,7 @@ from uuid import uuid4
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
@@ -34,6 +35,8 @@ from college_finance_manager.application.initialize_ledger import (
     InitializeLedgerCommand,
     initialize_ledger,
 )
+from college_finance_manager.application.file_operations import export_filtered_transactions
+from college_finance_manager.application.read_models import get_dashboard_data, get_ledger, list_categories
 from college_finance_manager.domain.money import parse_yuan_to_cents
 from college_finance_manager.domain.money import format_cents
 from college_finance_manager.application.transactions import (
@@ -44,6 +47,14 @@ from college_finance_manager.application.transactions import (
     list_transactions,
     reverse_transaction,
     void_unrealized_transaction,
+)
+from college_finance_manager.infrastructure.paths import AppPaths
+from college_finance_manager.ui.operations_pages import (
+    AdvancePage,
+    AttachmentManagerDialog,
+    ReimbursementPage,
+    ReportsPage,
+    SettingsPage,
 )
 
 
@@ -145,13 +156,10 @@ class TransactionDialog(QDialog):
     def _load_categories(self) -> None:
         selected = self.category.currentData()
         self.category.clear()
-        rows = self.connection.execute(
-            """SELECT id, name FROM categories
-               WHERE ledger_id = ? AND type = ? AND is_active = 1 ORDER BY name""",
-            (self.ledger_id, self.direction.currentData()),
-        )
+        rows = list_categories(self.connection, self.ledger_id, self.direction.currentData())
         for row in rows:
-            self.category.addItem(row["name"], row["id"])
+            if row["is_active"]:
+                self.category.addItem(row["name"], row["id"])
         if selected:
             index = self.category.findData(selected)
             if index >= 0:
@@ -183,9 +191,10 @@ class TransactionDialog(QDialog):
 class TransactionPage(QWidget):
     changed = Signal()
 
-    def __init__(self, connection: sqlite3.Connection, ledger_id: str, parent=None) -> None:
+    def __init__(self, connection: sqlite3.Connection, paths: AppPaths, ledger_id: str, parent=None) -> None:
         super().__init__(parent)
         self.connection = connection
+        self.paths = paths
         self.ledger_id = ledger_id
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -204,14 +213,39 @@ class TransactionPage(QWidget):
         self.direction_filter.addItem("全部类型", None)
         self.direction_filter.addItem("收入", "income")
         self.direction_filter.addItem("支出", "expense")
+        self.use_dates = QCheckBox("日期")
+        self.date_from = QDateEdit(QDate(QDate.currentDate().year(), 1, 1))
+        self.date_to = QDateEdit(QDate.currentDate())
+        self.date_from.setCalendarPopup(True)
+        self.date_to.setCalendarPopup(True)
+        self.category_filter = QComboBox()
+        self.category_filter.addItem("全部类别", None)
+        for category in list_categories(connection, ledger_id):
+            self.category_filter.addItem(category["name"], category["id"])
+        self.min_amount = QLineEdit()
+        self.min_amount.setPlaceholderText("最低金额")
+        self.max_amount = QLineEdit()
+        self.max_amount.setPlaceholderText("最高金额")
+        self.handler_filter = QLineEdit()
+        self.handler_filter.setPlaceholderText("经办人")
         self.keyword_filter = QLineEdit()
         self.keyword_filter.setPlaceholderText("搜索用途或备注")
         search_button = QPushButton("筛选")
         search_button.clicked.connect(self.reload)
         filters.addWidget(self.direction_filter)
-        filters.addWidget(self.keyword_filter, 1)
-        filters.addWidget(search_button)
+        filters.addWidget(self.use_dates)
+        filters.addWidget(self.date_from)
+        filters.addWidget(self.date_to)
+        filters.addStretch()
         layout.addLayout(filters)
+        advanced_filters = QHBoxLayout()
+        advanced_filters.addWidget(self.category_filter)
+        advanced_filters.addWidget(self.min_amount)
+        advanced_filters.addWidget(self.max_amount)
+        advanced_filters.addWidget(self.handler_filter)
+        advanced_filters.addWidget(self.keyword_filter, 1)
+        advanced_filters.addWidget(search_button)
+        layout.addLayout(advanced_filters)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(("编号", "日期", "类型", "金额", "类别", "用途/来源", "状态"))
@@ -229,14 +263,44 @@ class TransactionPage(QWidget):
         void_button.clicked.connect(self._void)
         actions.addWidget(reverse_button)
         actions.addWidget(void_button)
+        attachment_button = QPushButton("凭证")
+        attachment_button.clicked.connect(self._attachments)
+        actions.addWidget(attachment_button)
+        export_button = QPushButton("导出筛选结果")
+        export_button.clicked.connect(self._export)
+        actions.addWidget(export_button)
         layout.addLayout(actions)
         self.reload()
 
+    def reload_categories(self) -> None:
+        selected = self.category_filter.currentData()
+        self.category_filter.clear()
+        self.category_filter.addItem("全部类别", None)
+        for category in list_categories(self.connection, self.ledger_id):
+            self.category_filter.addItem(category["name"], category["id"])
+        index = self.category_filter.findData(selected)
+        self.category_filter.setCurrentIndex(index if index >= 0 else 0)
+
     def reload(self) -> None:
+        try:
+            minimum = parse_yuan_to_cents(self.min_amount.text(), allow_zero=True) if self.min_amount.text().strip() else None
+            maximum = parse_yuan_to_cents(self.max_amount.text(), allow_zero=True) if self.max_amount.text().strip() else None
+        except Exception as exc:
+            QMessageBox.warning(self, "筛选金额无效", str(exc))
+            return
         rows = list_transactions(
             self.connection,
             self.ledger_id,
-            TransactionFilter(direction=self.direction_filter.currentData(), keyword=self.keyword_filter.text()),
+            TransactionFilter(
+                date_from=self.date_from.date().toPython() if self.use_dates.isChecked() else None,
+                date_to=self.date_to.date().toPython() if self.use_dates.isChecked() else None,
+                direction=self.direction_filter.currentData(),
+                category_id=self.category_filter.currentData(),
+                amount_min_cents=minimum,
+                amount_max_cents=maximum,
+                handler=self.handler_filter.text(),
+                keyword=self.keyword_filter.text(),
+            ),
         )
         self.table.setRowCount(len(rows))
         direction_names = {"income": "收入", "expense": "支出"}
@@ -299,13 +363,47 @@ class TransactionPage(QWidget):
         self.reload()
         self.changed.emit()
 
+    def _attachments(self) -> None:
+        transaction_id = self._selected_id()
+        if transaction_id:
+            AttachmentManagerDialog(
+                self.connection, self.paths, self.ledger_id,
+                "transaction", transaction_id, self,
+            ).exec()
+
+    def _export(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(self, "导出筛选流水", "筛选流水.xlsx", "Excel (*.xlsx)")
+        if not filename:
+            return
+        filters = TransactionFilter(
+            date_from=self.date_from.date().toPython() if self.use_dates.isChecked() else None,
+            date_to=self.date_to.date().toPython() if self.use_dates.isChecked() else None,
+            direction=self.direction_filter.currentData(), category_id=self.category_filter.currentData(),
+            amount_min_cents=parse_yuan_to_cents(self.min_amount.text(), allow_zero=True) if self.min_amount.text().strip() else None,
+            amount_max_cents=parse_yuan_to_cents(self.max_amount.text(), allow_zero=True) if self.max_amount.text().strip() else None,
+            handler=self.handler_filter.text(), keyword=self.keyword_filter.text(),
+        )
+        try:
+            rows = list_transactions(self.connection, self.ledger_id, filters, limit=100000)
+            export_filtered_transactions(rows, Path(filename))
+        except Exception as exc:
+            QMessageBox.critical(self, "导出失败", str(exc))
+            return
+        QMessageBox.information(self, "导出完成", filename)
+
 
 class MainWindow(QMainWindow):
     NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置")
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        paths: AppPaths,
+        restore_callback,
+    ) -> None:
         super().__init__()
         self.connection = connection
+        self.paths = paths
         self.setWindowTitle("学院组织资金管理助手")
         self.setMinimumSize(1024, 680)
         container = QWidget()
@@ -317,12 +415,24 @@ class MainWindow(QMainWindow):
         self.overview = self._build_overview()
         self.pages.addWidget(self.overview)
         ledger = self._ledger_row()
-        self.transaction_page = TransactionPage(connection, ledger["id"], self) if ledger else self._build_placeholder("收支流水")
+        self.transaction_page = TransactionPage(connection, paths, ledger["id"], self) if ledger else self._build_placeholder("收支流水")
         if isinstance(self.transaction_page, TransactionPage):
             self.transaction_page.changed.connect(self._refresh_overview)
         self.pages.addWidget(self.transaction_page)
-        for title in self.NAVIGATION[2:]:
-            self.pages.addWidget(self._build_placeholder(title))
+        if ledger:
+            reimbursement_page = ReimbursementPage(connection, paths, ledger["id"], self)
+            advance_page = AdvancePage(connection, paths, ledger["id"], self)
+            reimbursement_page.changed.connect(self._refresh_overview)
+            advance_page.changed.connect(self._refresh_overview)
+            self.pages.addWidget(reimbursement_page)
+            self.pages.addWidget(advance_page)
+            self.pages.addWidget(ReportsPage(connection, ledger["id"], self))
+            settings_page = SettingsPage(connection, paths, ledger["id"], restore_callback, self)
+            settings_page.categories_changed.connect(self.transaction_page.reload_categories)
+            self.pages.addWidget(settings_page)
+        else:
+            for title in self.NAVIGATION[2:]:
+                self.pages.addWidget(self._build_placeholder(title))
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
         root.addWidget(self.navigation)
@@ -341,9 +451,7 @@ class MainWindow(QMainWindow):
         )
 
     def _ledger_row(self):
-        return self.connection.execute(
-            "SELECT id, name, opening_balance_cents, opening_date FROM ledgers LIMIT 1"
-        ).fetchone()
+        return get_ledger(self.connection)
 
     def _build_overview(self) -> QWidget:
         page = QWidget()
@@ -377,8 +485,36 @@ class MainWindow(QMainWindow):
         caption.setObjectName("muted")
         card_layout.addWidget(caption)
         layout.addWidget(card)
+        if ledger:
+            dashboard = get_dashboard_data(self.connection, ledger["id"], date.today().strftime("%Y-%m"))
+            metrics = QLabel(
+                f"本月收入 ¥ {format_cents(dashboard['month_income_cents'])}    "
+                f"本月支出 ¥ {format_cents(dashboard['month_expense_cents'])}    "
+                f"待付款报销 {dashboard['pending_reimbursements']} 笔    "
+                f"未结清预付款 {dashboard['open_advances']} 笔"
+            )
+            metrics.setStyleSheet("font-size: 16px; padding: 10px 0;")
+            layout.addWidget(metrics)
+            recent_label = QLabel("最近 10 笔流水")
+            recent_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+            layout.addWidget(recent_label)
+            self.recent_table = QTableWidget(0, 5)
+            self.recent_table.setHorizontalHeaderLabels(("日期", "编号", "类型", "金额", "用途/来源"))
+            self.recent_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            self.recent_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+            self._fill_recent(dashboard["recent"])
+            layout.addWidget(self.recent_table)
         layout.addStretch()
         return page
+
+    def _fill_recent(self, rows) -> None:
+        if not hasattr(self, "recent_table"):
+            return
+        self.recent_table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            values = (row["occurred_on"], row["transaction_no"], "收入" if row["direction"] == "income" else "支出", format_cents(row["amount_cents"]), row["purpose"])
+            for j, value in enumerate(values):
+                self.recent_table.setItem(i, j, QTableWidgetItem(str(value)))
 
     def _refresh_overview(self) -> None:
         ledger = self._ledger_row()
@@ -392,6 +528,8 @@ class MainWindow(QMainWindow):
         )
         color = "#c2410c" if totals.is_negative else "#1f2937"
         self.balance_value.setStyleSheet(f"font-size: 30px; font-weight: 600; color: {color};")
+        dashboard = get_dashboard_data(self.connection, ledger["id"], date.today().strftime("%Y-%m"))
+        self._fill_recent(dashboard["recent"])
 
     @staticmethod
     def _build_placeholder(title: str) -> QWidget:
@@ -401,7 +539,7 @@ class MainWindow(QMainWindow):
         heading = QLabel(title)
         heading.setObjectName("heading")
         layout.addWidget(heading)
-        message = QLabel("此模块尚未开放。当前版本仅用于验证阶段 A 的基础设施，不能用于正式记账。")
+        message = QLabel("请先完成账本初始化。")
         message.setWordWrap(True)
         message.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         message.setObjectName("muted")

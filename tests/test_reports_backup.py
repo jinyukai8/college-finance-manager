@@ -7,7 +7,8 @@ from college_finance_manager.application.initialize_ledger import InitializeLedg
 from college_finance_manager.application.transactions import CreateTransactionCommand, create_direct_transaction
 from college_finance_manager.infrastructure.backup import create_complete_backup, restore_backup_to_empty_directory, validate_backup
 from college_finance_manager.infrastructure.database import connect_database
-from college_finance_manager.infrastructure.reports import export_financial_report
+from college_finance_manager.infrastructure.reports import export_financial_report, export_transaction_rows
+from college_finance_manager.application.transactions import list_transactions
 
 
 def _data(database, tmp_path):
@@ -58,3 +59,11 @@ def test_backup_restore_preserves_database_and_attachment_hash(database, tmp_pat
     finally:
         restored_db.close()
     assert (restored / "attachments" / "evidence.pdf").read_bytes() == b"%PDF-test"
+
+
+def test_filtered_transaction_export_is_safe(database, tmp_path):
+    ledger = _data(database, tmp_path)
+    output = export_transaction_rows(list_transactions(database, ledger), tmp_path / "filtered.xlsx")
+    workbook = load_workbook(output, data_only=False)
+    assert workbook["筛选流水"]["F2"].value == "'=1+1"
+    workbook.close()

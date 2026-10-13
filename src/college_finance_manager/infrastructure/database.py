@@ -26,6 +26,39 @@ def _migration_resources() -> list:
     return sorted((item for item in root.iterdir() if item.name.endswith(".sql")), key=lambda item: item.name)
 
 
+def pending_migration_versions(connection: sqlite3.Connection) -> list[str]:
+    table_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone()
+    applied = set()
+    if table_exists:
+        applied = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+    return [resource.name.removesuffix(".sql") for resource in _migration_resources() if resource.name.removesuffix(".sql") not in applied]
+
+
+def apply_migration_script(
+    connection: sqlite3.Connection, *, version: str, sql: str, checksum: str | None = None
+) -> None:
+    checksum = checksum or hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        script = (
+            "BEGIN IMMEDIATE;\n"
+            + sql
+            + "\nINSERT INTO schema_migrations(version, applied_at, checksum_sha256) VALUES ("
+            + "'" + version.replace("'", "''") + "', "
+            + "'" + now.replace("'", "''") + "', "
+            + "'" + checksum + "');\nCOMMIT;"
+        )
+        connection.executescript(script)
+    except sqlite3.DatabaseError as exc:
+        try:
+            connection.execute("ROLLBACK")
+        except sqlite3.DatabaseError:
+            pass
+        raise MigrationError(f"迁移 {version} 失败") from exc
+
+
 def apply_migrations(connection: sqlite3.Connection) -> None:
     connection.execute(
         """CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -46,20 +79,4 @@ def apply_migrations(connection: sqlite3.Connection) -> None:
             if applied[version] != checksum:
                 raise MigrationError(f"已应用迁移 {version} 的校验和发生变化")
             continue
-        now = datetime.now().astimezone().isoformat(timespec="seconds")
-        try:
-            script = (
-                "BEGIN IMMEDIATE;\n"
-                + sql
-                + "\nINSERT INTO schema_migrations(version, applied_at, checksum_sha256) VALUES ("
-                + "'" + version.replace("'", "''") + "', "
-                + "'" + now.replace("'", "''") + "', "
-                + "'" + checksum + "');\nCOMMIT;"
-            )
-            connection.executescript(script)
-        except sqlite3.DatabaseError as exc:
-            try:
-                connection.execute("ROLLBACK")
-            except sqlite3.DatabaseError:
-                pass
-            raise MigrationError(f"迁移 {version} 失败") from exc
+        apply_migration_script(connection, version=version, sql=sql, checksum=checksum)

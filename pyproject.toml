@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "college-finance-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "学院组织资金管理助手"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

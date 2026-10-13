@@ -9,13 +9,21 @@ from PySide6.QtWidgets import QApplication
 
 from college_finance_manager.application.initialize_ledger import InitializeLedgerCommand, initialize_ledger
 from college_finance_manager.ui.main_window import MainWindow
+from college_finance_manager.infrastructure.paths import AppPaths
 
 
 def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     initialize_ledger(database, InitializeLedgerCommand("测试账本", date.today(), 0, str(tmp_path)))
     app = QApplication.instance() or QApplication([])
-    window = MainWindow(database)
+    paths = AppPaths.from_root(tmp_path / "app")
+    paths.ensure_directories()
+    window = MainWindow(database, paths, lambda _path: None)
     assert window.minimumWidth() == 1024
     assert window.navigation.count() == 6
+    assert window.pages.count() == 6
+    assert window.pages.widget(2).__class__.__name__ == "ReimbursementPage"
+    assert window.pages.widget(3).__class__.__name__ == "AdvancePage"
+    assert window.pages.widget(4).__class__.__name__ == "ReportsPage"
+    assert window.pages.widget(5).__class__.__name__ == "SettingsPage"
     window.close()
     app.processEvents()

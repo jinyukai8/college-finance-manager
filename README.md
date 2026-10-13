@@ -30,10 +30,18 @@ py -3.12 -m venv .venv
 
 产品默认数据位置仍遵循规范使用 `%LOCALAPPDATA%\CollegeFinanceManager\`；本项目的部署脚本显式指定 `D:\CollegeFinanceManager\data\`，因此实际数据保存在 D 盘。测试必须使用 pytest 提供的临时目录，禁止指向正式目录。
 
-当前代码已完成 A→E 的首轮贯通：数据库与初始化、直接收支、冲销与作废、报销和预付款核心用例、凭证导入、Excel 报表、核对、完整备份恢复以及 Windows 构建。报销、预付款、凭证、报表和恢复的图形界面仍需在下一轮补齐，详见 `KNOWN_ISSUES.md`；当前版本不得直接用于正式记账。
+0.2.0 已贯通数据库初始化、直接收支、冲销与作废、报销、预付款、凭证、Excel 报表、核对、自动与手动备份、安全恢复、单实例保护和 Windows 安装。正式使用前请先创建一份手动备份，并定期把备份复制到另一存储设备。
 
 Windows 构建：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
 ```
+
+生成可卸载安装程序（需要 Inno Setup 6）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
+```
+
+安装包输出到 `D:\CollegeFinanceManager\installer\`，默认把程序安装到 `D:\CollegeFinanceManager\App`，数据保存在 `D:\CollegeFinanceManager\data`。卸载程序不会删除数据目录。

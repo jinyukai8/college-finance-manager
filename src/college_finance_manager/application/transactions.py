@@ -338,3 +338,41 @@ def rename_category(connection: sqlite3.Connection, category_id: str, new_name: 
     except Exception:
         connection.rollback()
         raise
+
+
+def create_category(connection: sqlite3.Connection, ledger_id: str, category_type: str, name: str) -> str:
+    name = name.strip()
+    if category_type not in {"income", "expense"} or not name:
+        raise TransactionRuleError("类别类型或名称无效")
+    category_id = str(uuid4())
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        now = _now()
+        connection.execute(
+            """INSERT INTO categories(id,ledger_id,type,name,is_active,created_at,updated_at)
+               VALUES (?,?,?,?,1,?,?)""",
+            (category_id, ledger_id, category_type, name, now, now),
+        )
+        _audit(connection, ledger_id, "category", category_id, "created", {"type": category_type, "name": name})
+        connection.commit()
+        return category_id
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def set_category_active(connection: sqlite3.Connection, category_id: str, active: bool) -> None:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT * FROM categories WHERE id=?", (category_id,)).fetchone()
+        if not row:
+            raise TransactionRuleError("类别不存在")
+        connection.execute(
+            "UPDATE categories SET is_active=?, updated_at=? WHERE id=?",
+            (1 if active else 0, _now(), category_id),
+        )
+        _audit(connection, row["ledger_id"], "category", category_id, "activated" if active else "deactivated", {"name": row["name"]})
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise

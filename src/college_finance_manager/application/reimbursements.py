@@ -72,6 +72,13 @@ def cancel_reimbursement(connection: sqlite3.Connection, reimbursement_id: str, 
     _change_status(connection, reimbursement_id, row["status"], "cancelled", "cancelled", reason)
 
 
+def reject_reimbursement(connection: sqlite3.Connection, reimbursement_id: str, reason: str) -> None:
+    reason = reason.strip()
+    if not reason:
+        raise ReimbursementRuleError("驳回原因不能为空")
+    _change_status(connection, reimbursement_id, "pending", "rejected", "rejected", reason)
+
+
 def pay_reimbursement(
     connection: sqlite3.Connection,
     reimbursement_id: str,

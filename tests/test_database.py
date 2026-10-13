@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+from college_finance_manager.infrastructure.database import MigrationError, apply_migration_script
+
 
 EXPECTED_TABLES = {
     "ledgers",
@@ -56,3 +58,23 @@ def test_amount_and_enum_constraints_are_enforced(database):
                (id, ledger_id, type, name, is_active, created_at, updated_at)
                VALUES ('c', 'ledger', 'unknown', '测试', 1, 'now', 'now')"""
         )
+
+
+def test_failed_migration_rolls_back_and_preserves_existing_data(database):
+    database.execute(
+        """INSERT INTO ledgers VALUES
+           ('safe', '历史账本', '2026-01-01', 12345, 'now', 'now')"""
+    )
+    with pytest.raises(MigrationError):
+        apply_migration_script(
+            database,
+            version="9999_broken",
+            sql="CREATE TABLE should_rollback(id INTEGER); INVALID SQL;",
+        )
+    assert database.execute("SELECT name FROM ledgers WHERE id='safe'").fetchone()[0] == "历史账本"
+    assert database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='should_rollback'"
+    ).fetchone() is None
+    assert database.execute(
+        "SELECT 1 FROM schema_migrations WHERE version='9999_broken'"
+    ).fetchone() is None

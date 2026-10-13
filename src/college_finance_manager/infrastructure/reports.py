@@ -137,3 +137,35 @@ def export_financial_report(
     workbook.save(destination)
     load_workbook(destination, read_only=True).close()
     return destination
+
+
+def export_transaction_rows(rows: list[sqlite3.Row], destination: Path) -> Path:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "筛选流水"
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A2"
+    sheet.append(("编号", "发生日期", "类型", "金额（元）", "类别", "用途/来源", "经办人", "支付方式", "状态", "来源"))
+    for row in rows:
+        sheet.append((
+            row["transaction_no"], date.fromisoformat(row["occurred_on"]),
+            "收入" if row["direction"] == "income" else "支出",
+            Decimal(row["amount_cents"]) / 100, safe_excel_text(row["category_name_snapshot"]),
+            safe_excel_text(row["purpose"]), safe_excel_text(row["handler"]),
+            safe_excel_text(row["payment_method"]), row["status"], row["source"],
+        ))
+    for cell in sheet[1]:
+        cell.font = Font(name="Arial", bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.alignment = Alignment(horizontal="center")
+    for cell in sheet["B"][1:]:
+        cell.number_format = "yyyy-mm-dd"
+    for cell in sheet["D"][1:]:
+        cell.number_format = '#,##0.00;[Red](#,##0.00);-'
+    widths = (16, 12, 8, 14, 14, 30, 14, 14, 10, 16)
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(destination)
+    load_workbook(destination, read_only=True).close()
+    return destination

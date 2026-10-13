@@ -66,6 +66,26 @@ def pay_advance(connection, advance_id, *, category_id, paid_on, idempotency_key
         raise
 
 
+def cancel_advance(connection, advance_id: str, reason: str) -> None:
+    reason = reason.strip()
+    if not reason:
+        raise AdvanceRuleError("取消原因不能为空")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT * FROM advances WHERE id=?", (advance_id,)).fetchone()
+        if not row or row["status"] != "pending_payment":
+            raise AdvanceRuleError("只有待支付预付款可取消")
+        connection.execute(
+            "UPDATE advances SET status='cancelled', cancel_reason=?, updated_at=? WHERE id=?",
+            (reason, _now(), advance_id),
+        )
+        _audit(connection, row["ledger_id"], "advance", advance_id, "cancelled", {"from": "pending_payment"}, reason)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+
 def _used_amount(connection, advance_id) -> int:
     return connection.execute(
         "SELECT COALESCE(SUM(amount_cents), 0) FROM advance_events WHERE advance_id = ?", (advance_id,)

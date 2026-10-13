@@ -13,6 +13,8 @@ from college_finance_manager.application.transactions import (
     rename_category,
     reverse_transaction,
     void_unrealized_transaction,
+    create_category,
+    set_category_active,
 )
 
 
@@ -119,3 +121,14 @@ def test_negative_balance_is_recorded_not_rejected(database, tmp_path):
     totals = get_cash_totals(database, ledger_id)
     assert totals.balance_cents == -100
     assert totals.is_negative
+
+
+def test_categories_can_be_added_and_deactivated_without_deleting_history(database, tmp_path):
+    ledger_id, categories = _initialized(database, tmp_path)
+    category_id = create_category(database, ledger_id, "expense", "宣传印刷")
+    transaction_id = _record(database, ledger_id, category_id, "expense", 500, "category-history")
+    set_category_active(database, category_id, False)
+    assert database.execute("SELECT is_active FROM categories WHERE id=?", (category_id,)).fetchone()[0] == 0
+    assert database.execute("SELECT category_name_snapshot FROM transactions WHERE id=?", (transaction_id,)).fetchone()[0] == "宣传印刷"
+    with pytest.raises(TransactionRuleError):
+        _record(database, ledger_id, category_id, "expense", 500, "inactive-new")
