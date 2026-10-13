@@ -48,6 +48,7 @@ from college_finance_manager.application.read_models import (
     list_attachments,
     list_categories,
     list_reconciliations,
+    list_recycle_bin_records,
     list_reimbursements,
 )
 from college_finance_manager.application.reconciliation import record_reconciliation
@@ -636,3 +637,65 @@ class SettingsPage(QWidget):
         )
         if answer == QMessageBox.Yes:
             self.restore_callback(path)
+
+
+class RecycleBinPage(QWidget):
+    """只读展示作废、驳回和取消记录；不物理删除财务历史。"""
+
+    def __init__(self, connection: sqlite3.Connection, ledger_id: str, parent=None) -> None:
+        super().__init__(parent)
+        self.connection = connection
+        self.ledger_id = ledger_id
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        top = QHBoxLayout()
+        top.addWidget(_heading("回收站"))
+        top.addStretch()
+        refresh = QPushButton("刷新")
+        refresh.clicked.connect(self.reload)
+        top.addWidget(refresh)
+        layout.addLayout(top)
+        explanation = QLabel(
+            "这里集中保留作废流水、已驳回或已取消的业务记录。"
+            "为保护财务历史，记录不会被物理删除，也不会在这里直接恢复余额。"
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("muted")
+        layout.addWidget(explanation)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(("类型", "编号", "日期", "摘要", "状态", "原因"))
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        layout.addWidget(self.table, 1)
+        self.reload()
+
+    def reload(self) -> None:
+        records = list_recycle_bin_records(self.connection, self.ledger_id)
+        self.table.setRowCount(len(records))
+        entity_names = {
+            "transaction": "收支流水",
+            "reimbursement": "报销",
+            "advance": "预付款",
+        }
+        status_names = {
+            "voided": "已作废",
+            "rejected": "已驳回",
+            "cancelled": "已取消",
+        }
+        for index, record in enumerate(records):
+            values = (
+                entity_names.get(record["entity_type"], record["entity_type"]),
+                record["record_no"],
+                record["record_date"],
+                record["summary"],
+                status_names.get(record["status"], record["status"]),
+                record["reason"] or "—",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if column == 0:
+                    item.setData(Qt.UserRole, record["entity_id"])
+                self.table.setItem(index, column, item)

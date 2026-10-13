@@ -16,6 +16,16 @@ if (-not (Test-Path -LiteralPath $PythonExe)) {
 New-Item -ItemType Directory -Force -Path $DistRoot, $BuildRoot, $SpecRoot | Out-Null
 Push-Location $SourceRoot
 try {
+    # 先把当前源码重新安装到专用构建环境，避免 PyInstaller 的数据收集读取旧版本。
+    & $PythonExe -m pip install `
+        --disable-pip-version-check `
+        --no-deps `
+        --no-build-isolation `
+        --force-reinstall `
+        $SourceRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "当前源码安装到构建环境失败，退出码 $LASTEXITCODE"
+    }
     & $PythonExe -m PyInstaller `
         --noconfirm `
         --clean `

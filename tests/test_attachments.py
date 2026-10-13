@@ -3,6 +3,11 @@ from datetime import date
 import pytest
 
 from college_finance_manager.application.initialize_ledger import InitializeLedgerCommand, initialize_ledger
+from college_finance_manager.application.transactions import (
+    CreateTransactionCommand,
+    create_direct_transaction,
+    list_transactions,
+)
 from college_finance_manager.application.reimbursements import create_reimbursement
 from college_finance_manager.infrastructure.attachments import AttachmentError, import_attachment
 
@@ -42,3 +47,35 @@ def test_valid_png_is_copied_under_uuid_and_hashed(database, tmp_path):
     assert row["original_name"] == "凭证.png"
     assert len(row["sha256"]) == 64
     assert (root / row["internal_path"]).read_bytes() == source.read_bytes()
+
+
+def test_transaction_list_reports_invoice_submission_status(database, tmp_path):
+    ledger = initialize_ledger(database, InitializeLedgerCommand("账本", date.today(), 0, str(tmp_path)))
+    category = database.execute(
+        "SELECT id FROM categories WHERE ledger_id=? AND type='expense' LIMIT 1", (ledger,)
+    ).fetchone()[0]
+    transaction = create_direct_transaction(
+        database,
+        CreateTransactionCommand(
+            ledger_id=ledger,
+            occurred_on=date.today(),
+            direction="expense",
+            amount_cents=100,
+            category_id=category,
+            purpose="采购",
+            item="签字笔",
+            idempotency_key="invoice-status",
+        ),
+    )
+    source = tmp_path / "发票.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\n" + b"invoice")
+    import_attachment(
+        database,
+        attachments_root=tmp_path / "attachments",
+        ledger_id=ledger,
+        entity_type="transaction",
+        entity_id=transaction,
+        source_path=source,
+    )
+    rows = list_transactions(database, ledger)
+    assert rows[0]["attachment_count"] == 1

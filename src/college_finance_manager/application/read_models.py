@@ -89,7 +89,8 @@ def get_dashboard_data(connection: sqlite3.Connection, ledger_id: str, month_pre
     recent = list(
         connection.execute(
             """SELECT transaction_no,occurred_on,direction,amount_cents,purpose,status
-               FROM transactions WHERE ledger_id=? ORDER BY occurred_on DESC,created_at DESC LIMIT 10""",
+               FROM transactions WHERE ledger_id=? AND status<>'voided'
+               ORDER BY occurred_on DESC,created_at DESC LIMIT 10""",
             (ledger_id,),
         )
     )
@@ -109,3 +110,24 @@ def get_dashboard_data(connection: sqlite3.Connection, ledger_id: str, month_pre
         "recent": recent,
         "categories": categories,
     }
+
+
+def list_recycle_bin_records(connection: sqlite3.Connection, ledger_id: str):
+    return list(
+        connection.execute(
+            """SELECT 'transaction' AS entity_type, id AS entity_id,
+                      transaction_no AS record_no, occurred_on AS record_date,
+                      purpose AS summary, status, void_reason AS reason, updated_at
+               FROM transactions WHERE ledger_id=? AND status='voided'
+               UNION ALL
+               SELECT 'reimbursement', id, '报销', applied_on, purpose, status,
+                      COALESCE(decision_reason, ''), updated_at
+               FROM reimbursements WHERE ledger_id=? AND status IN ('rejected','cancelled')
+               UNION ALL
+               SELECT 'advance', id, '预付款', requested_on, purpose, status,
+                      COALESCE(cancel_reason, ''), updated_at
+               FROM advances WHERE ledger_id=? AND status='cancelled'
+               ORDER BY updated_at DESC""",
+            (ledger_id, ledger_id, ledger_id),
+        )
+    )

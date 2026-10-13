@@ -35,8 +35,11 @@ def export_financial_report(
         raise ValueError("账本不存在")
     transactions = list(
         connection.execute(
-            """SELECT * FROM transactions
-               WHERE ledger_id = ? AND occurred_on BETWEEN ? AND ?
+            """SELECT t.*,
+                      (SELECT COUNT(*) FROM attachments a
+                       WHERE a.entity_type='transaction' AND a.entity_id=t.id) AS attachment_count
+               FROM transactions t
+               WHERE t.ledger_id = ? AND t.occurred_on BETWEEN ? AND ?
                ORDER BY occurred_on, transaction_no""",
             (ledger_id, date_from.isoformat(), date_to.isoformat()),
         )
@@ -65,14 +68,19 @@ def export_financial_report(
     for row in summary_rows:
         summary.append(row)
 
-    cash.append(("编号", "发生日期", "类型", "金额（元）", "类别快照", "用途/来源", "经办人", "支付方式", "状态", "来源"))
+    cash.append((
+        "编号", "发生日期", "类型", "金额（元）", "类别快照", "用途/来源", "物品",
+        "发票状态", "经办人", "支付方式", "状态", "来源",
+    ))
     for row in transactions:
         cash.append(
             (
                 row["transaction_no"], date.fromisoformat(row["occurred_on"]),
                 "收入" if row["direction"] == "income" else "支出",
                 Decimal(row["amount_cents"]) / 100, safe_excel_text(row["category_name_snapshot"]),
-                safe_excel_text(row["purpose"]), safe_excel_text(row["handler"]),
+                safe_excel_text(row["purpose"]), safe_excel_text(row["item"]),
+                f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
+                safe_excel_text(row["handler"]),
                 safe_excel_text(row["payment_method"]), row["status"], row["source"],
             )
         )
@@ -145,13 +153,18 @@ def export_transaction_rows(rows: list[sqlite3.Row], destination: Path) -> Path:
     sheet.title = "筛选流水"
     sheet.sheet_view.showGridLines = False
     sheet.freeze_panes = "A2"
-    sheet.append(("编号", "发生日期", "类型", "金额（元）", "类别", "用途/来源", "经办人", "支付方式", "状态", "来源"))
+    sheet.append((
+        "编号", "发生日期", "类型", "金额（元）", "类别", "用途/来源", "物品",
+        "发票状态", "经办人", "支付方式", "状态", "来源",
+    ))
     for row in rows:
         sheet.append((
             row["transaction_no"], date.fromisoformat(row["occurred_on"]),
             "收入" if row["direction"] == "income" else "支出",
             Decimal(row["amount_cents"]) / 100, safe_excel_text(row["category_name_snapshot"]),
-            safe_excel_text(row["purpose"]), safe_excel_text(row["handler"]),
+            safe_excel_text(row["purpose"]), safe_excel_text(row["item"]),
+            f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
+            safe_excel_text(row["handler"]),
             safe_excel_text(row["payment_method"]), row["status"], row["source"],
         ))
     for cell in sheet[1]:
@@ -162,7 +175,7 @@ def export_transaction_rows(rows: list[sqlite3.Row], destination: Path) -> Path:
         cell.number_format = "yyyy-mm-dd"
     for cell in sheet["D"][1:]:
         cell.number_format = '#,##0.00;[Red](#,##0.00);-'
-    widths = (16, 12, 8, 14, 14, 30, 14, 14, 10, 16)
+    widths = (16, 12, 8, 14, 14, 30, 16, 14, 14, 14, 10, 16)
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
     destination.parent.mkdir(parents=True, exist_ok=True)

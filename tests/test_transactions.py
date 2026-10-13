@@ -7,15 +7,18 @@ import pytest
 from college_finance_manager.application.initialize_ledger import InitializeLedgerCommand, initialize_ledger
 from college_finance_manager.application.transactions import (
     CreateTransactionCommand,
+    TransactionFilter,
     TransactionRuleError,
     create_direct_transaction,
     get_cash_totals,
+    list_transactions,
     rename_category,
     reverse_transaction,
     void_unrealized_transaction,
     create_category,
     set_category_active,
 )
+from college_finance_manager.application.read_models import get_dashboard_data, list_recycle_bin_records
 
 
 def _initialized(database, tmp_path, opening=100_000):
@@ -132,3 +135,42 @@ def test_categories_can_be_added_and_deactivated_without_deleting_history(databa
     assert database.execute("SELECT category_name_snapshot FROM transactions WHERE id=?", (transaction_id,)).fetchone()[0] == "宣传印刷"
     with pytest.raises(TransactionRuleError):
         _record(database, ledger_id, category_id, "expense", 500, "inactive-new")
+
+
+def test_direct_transaction_stores_optional_item_and_searches_it(database, tmp_path):
+    ledger_id, categories = _initialized(database, tmp_path)
+    transaction_id = create_direct_transaction(
+        database,
+        CreateTransactionCommand(
+            ledger_id=ledger_id,
+            occurred_on=date(2026, 1, 2),
+            direction="expense",
+            amount_cents=888,
+            category_id=categories["expense"],
+            purpose="运动会用品",
+            item="篮球",
+            idempotency_key="item-search",
+        ),
+    )
+    stored = database.execute("SELECT item FROM transactions WHERE id=?", (transaction_id,)).fetchone()[0]
+    assert stored == "篮球"
+    rows = list_transactions(database, ledger_id, TransactionFilter(keyword="篮球"))
+    assert [row["id"] for row in rows] == [transaction_id]
+    assert rows[0]["attachment_count"] == 0
+
+
+def test_voided_transaction_is_hidden_from_active_views_and_kept_in_recycle_bin(database, tmp_path):
+    ledger_id, categories = _initialized(database, tmp_path)
+    transaction_id = _record(database, ledger_id, categories["expense"], "expense", 500, "void-view")
+    void_unrealized_transaction(database, transaction_id, "测试误录")
+
+    assert list_transactions(database, ledger_id) == []
+    assert list_transactions(
+        database, ledger_id, TransactionFilter(include_voided=True)
+    )[0]["status"] == "voided"
+    dashboard = get_dashboard_data(database, ledger_id, "2026-01")
+    assert dashboard["recent"] == []
+    recycle = list_recycle_bin_records(database, ledger_id)
+    assert len(recycle) == 1
+    assert recycle[0]["record_no"] == "TX-00000001"
+    assert recycle[0]["reason"] == "测试误录"

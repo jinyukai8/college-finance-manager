@@ -1,7 +1,7 @@
 # 阶段交付状态
 
 日期：2026-10-13
-版本：0.2.0
+版本：0.3.0
 
 ## A：基础设施
 
@@ -9,7 +9,7 @@
 
 ## B：直接收支
 
-通过。完成精确金额、收支录入与筛选、余额、负余额警示、幂等提交、冲销、误录作废、类别快照和审计日志。基础收支界面已接入。
+通过。完成精确金额、收支录入与筛选、余额、负余额警示、幂等提交、冲销、误录作废、类别快照和审计日志。新增物品字段、发票提交状态、必填提示和只读回收站；作废记录不再混入总览或常规列表。
 
 ## C：报销、预付款与凭证
 
@@ -21,15 +21,15 @@
 
 ## E：验收与 Windows 构建
 
-通过 20 笔跨 3 个月模拟账本验收和 41 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。当前 Windows 已完成静默安装、启动、卸载及数据保留检查，退出码均为 0。
+通过 20 笔跨 3 个月模拟账本验收和 45 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。0.3.0 打包程序已在隔离数据目录启动并成功执行 `0001`、`0002`；安装/卸载保数流程已在 0.2.0 的同一安装框架上验证。为避免影响当前正式安装，本轮未自动卸载用户正在使用的应用。
 
 ## 测试结果
 
 ```text
-41 passed
+45 passed
 ```
 
-构建警告只包含 Windows 构建中预期缺失的 POSIX/Java 可选模块。`D:\CollegeFinanceManager\data\` 保持为空，未创建或覆盖正式账本。
+构建和自动化测试仅使用隔离数据目录，不打开、不重建也不覆盖 `D:\CollegeFinanceManager\data\` 中的正式账本。升级时应用会先创建并验证完整迁移前备份。
 
 ## 后续增强
 

@@ -35,7 +35,7 @@ from college_finance_manager.application.initialize_ledger import (
     InitializeLedgerCommand,
     initialize_ledger,
 )
-from college_finance_manager.application.file_operations import export_filtered_transactions
+from college_finance_manager.application.file_operations import add_attachment, export_filtered_transactions
 from college_finance_manager.application.read_models import get_dashboard_data, get_ledger, list_categories
 from college_finance_manager.domain.money import parse_yuan_to_cents
 from college_finance_manager.domain.money import format_cents
@@ -54,6 +54,7 @@ from college_finance_manager.ui.operations_pages import (
     AttachmentManagerDialog,
     ReimbursementPage,
     ReportsPage,
+    RecycleBinPage,
     SettingsPage,
 )
 
@@ -118,11 +119,13 @@ class SetupDialog(QDialog):
 
 
 class TransactionDialog(QDialog):
-    def __init__(self, connection: sqlite3.Connection, ledger_id: str, parent=None) -> None:
+    def __init__(self, connection: sqlite3.Connection, paths: AppPaths, ledger_id: str, parent=None) -> None:
         super().__init__(parent)
         self.connection = connection
+        self.paths = paths
         self.ledger_id = ledger_id
         self.idempotency_key = str(uuid4())
+        self.invoice_paths: list[Path] = []
         self.setWindowTitle("新增收支")
         self.setMinimumWidth(480)
         layout = QFormLayout(self)
@@ -135,23 +138,50 @@ class TransactionDialog(QDialog):
         self.amount.setPlaceholderText("例如：128.50")
         self.category = QComboBox()
         self.purpose = QLineEdit()
+        self.item = QLineEdit()
         self.handler = QLineEdit()
         self.payment_method = QLineEdit()
         self.note = QLineEdit()
-        layout.addRow("类型", self.direction)
-        layout.addRow("发生日期", self.occurred_on)
-        layout.addRow("金额（元）", self.amount)
-        layout.addRow("类别", self.category)
-        layout.addRow("用途/来源", self.purpose)
+        invoice_row = QWidget()
+        invoice_layout = QHBoxLayout(invoice_row)
+        invoice_layout.setContentsMargins(0, 0, 0, 0)
+        choose_invoice = QPushButton("选择发票…")
+        choose_invoice.clicked.connect(self._choose_invoices)
+        self.invoice_summary = QLabel("未选择")
+        self.invoice_summary.setWordWrap(True)
+        invoice_layout.addWidget(choose_invoice)
+        invoice_layout.addWidget(self.invoice_summary, 1)
+        layout.addRow("类型 *", self.direction)
+        layout.addRow("发生日期 *", self.occurred_on)
+        layout.addRow("金额（元）*", self.amount)
+        layout.addRow("类别 *", self.category)
+        layout.addRow("用途/来源 *", self.purpose)
+        layout.addRow("物品（可选）", self.item)
         layout.addRow("经办人（可选）", self.handler)
         layout.addRow("支付方式（可选）", self.payment_method)
         layout.addRow("备注（可选）", self.note)
+        layout.addRow("发票（可选）", invoice_row)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("保存")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
         self.direction.currentIndexChanged.connect(self._load_categories)
         self._load_categories()
+
+    def _choose_invoices(self) -> None:
+        filenames, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择发票或凭证",
+            "",
+            "发票或凭证 (*.jpg *.jpeg *.png *.pdf)",
+        )
+        if not filenames:
+            return
+        self.invoice_paths = [Path(filename) for filename in filenames]
+        names = "、".join(path.name for path in self.invoice_paths)
+        self.invoice_summary.setText(f"已选择 {len(self.invoice_paths)} 个：{names}")
 
     def _load_categories(self) -> None:
         selected = self.category.currentData()
@@ -167,7 +197,7 @@ class TransactionDialog(QDialog):
 
     def _save(self) -> None:
         try:
-            create_direct_transaction(
+            transaction_id = create_direct_transaction(
                 self.connection,
                 CreateTransactionCommand(
                     ledger_id=self.ledger_id,
@@ -176,6 +206,7 @@ class TransactionDialog(QDialog):
                     amount_cents=parse_yuan_to_cents(self.amount.text()),
                     category_id=self.category.currentData() or "",
                     purpose=self.purpose.text(),
+                    item=self.item.text(),
                     handler=self.handler.text(),
                     payment_method=self.payment_method.text(),
                     note=self.note.text(),
@@ -185,6 +216,25 @@ class TransactionDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "保存失败", str(exc))
             return
+        failed: list[str] = []
+        for invoice_path in self.invoice_paths:
+            try:
+                add_attachment(
+                    self.connection,
+                    paths=self.paths,
+                    ledger_id=self.ledger_id,
+                    entity_type="transaction",
+                    entity_id=transaction_id,
+                    source_path=invoice_path,
+                )
+            except Exception as exc:
+                failed.append(f"{invoice_path.name}：{exc}")
+        if failed:
+            QMessageBox.warning(
+                self,
+                "流水已保存，部分发票未导入",
+                "\n".join(failed),
+            )
         self.accept()
 
 
@@ -247,12 +297,14 @@ class TransactionPage(QWidget):
         advanced_filters.addWidget(search_button)
         layout.addLayout(advanced_filters)
 
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(("编号", "日期", "类型", "金额", "类别", "用途/来源", "状态"))
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels(
+            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态")
+        )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
@@ -263,7 +315,7 @@ class TransactionPage(QWidget):
         void_button.clicked.connect(self._void)
         actions.addWidget(reverse_button)
         actions.addWidget(void_button)
-        attachment_button = QPushButton("凭证")
+        attachment_button = QPushButton("查看发票/凭证")
         attachment_button.clicked.connect(self._attachments)
         actions.addWidget(attachment_button)
         export_button = QPushButton("导出筛选结果")
@@ -309,7 +361,9 @@ class TransactionPage(QWidget):
             values = (
                 row["transaction_no"], row["occurred_on"], direction_names[row["direction"]],
                 format_cents(row["amount_cents"]), row["category_name_snapshot"] or "—",
-                row["purpose"], status_names[row["status"]],
+                row["item"] or "—", row["purpose"],
+                f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
+                status_names[row["status"]],
             )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
@@ -325,7 +379,7 @@ class TransactionPage(QWidget):
         return self.table.item(row, 0).data(Qt.UserRole)
 
     def _add(self) -> None:
-        dialog = TransactionDialog(self.connection, self.ledger_id, self)
+        dialog = TransactionDialog(self.connection, self.paths, self.ledger_id, self)
         if dialog.exec() == QDialog.Accepted:
             self.reload()
             self.changed.emit()
@@ -370,6 +424,7 @@ class TransactionPage(QWidget):
                 self.connection, self.paths, self.ledger_id,
                 "transaction", transaction_id, self,
             ).exec()
+            self.reload()
 
     def _export(self) -> None:
         filename, _ = QFileDialog.getSaveFileName(self, "导出筛选流水", "筛选流水.xlsx", "Excel (*.xlsx)")
@@ -393,7 +448,7 @@ class TransactionPage(QWidget):
 
 
 class MainWindow(QMainWindow):
-    NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置")
+    NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置", "回收站")
 
     def __init__(
         self,
@@ -430,6 +485,11 @@ class MainWindow(QMainWindow):
             settings_page = SettingsPage(connection, paths, ledger["id"], restore_callback, self)
             settings_page.categories_changed.connect(self.transaction_page.reload_categories)
             self.pages.addWidget(settings_page)
+            self.recycle_bin_page = RecycleBinPage(connection, ledger["id"], self)
+            self.transaction_page.changed.connect(self.recycle_bin_page.reload)
+            reimbursement_page.changed.connect(self.recycle_bin_page.reload)
+            advance_page.changed.connect(self.recycle_bin_page.reload)
+            self.pages.addWidget(self.recycle_bin_page)
         else:
             for title in self.NAVIGATION[2:]:
                 self.pages.addWidget(self._build_placeholder(title))

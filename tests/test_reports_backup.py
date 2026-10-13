@@ -18,7 +18,7 @@ def _data(database, tmp_path):
         database,
         CreateTransactionCommand(
             ledger_id=ledger, occurred_on=date(2026, 1, 2), direction="income", amount_cents=100,
-            category_id=category, purpose="=1+1", idempotency_key="formula-text",
+            category_id=category, purpose="=1+1", item="纪念徽章", idempotency_key="formula-text",
         ),
     )
     return ledger
@@ -35,6 +35,8 @@ def test_excel_has_required_sheets_and_formula_text_is_safe(database, tmp_path):
     purpose = workbook["现金流水"]["F2"]
     assert purpose.data_type == "s"
     assert purpose.value == "'=1+1"
+    assert workbook["现金流水"]["G2"].value == "纪念徽章"
+    assert workbook["现金流水"]["H2"].value == "未提交"
     assert workbook["资金汇总"]["B8"].value == 1001
     workbook.close()
 
@@ -66,4 +68,6 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
     output = export_transaction_rows(list_transactions(database, ledger), tmp_path / "filtered.xlsx")
     workbook = load_workbook(output, data_only=False)
     assert workbook["筛选流水"]["F2"].value == "'=1+1"
+    assert workbook["筛选流水"]["G2"].value == "纪念徽章"
+    assert workbook["筛选流水"]["H2"].value == "未提交"
     workbook.close()

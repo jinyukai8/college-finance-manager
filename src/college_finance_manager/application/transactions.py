@@ -25,6 +25,7 @@ class CreateTransactionCommand:
     amount_cents: int
     category_id: str
     purpose: str
+    item: str = ""
     handler: str = ""
     payment_method: str = ""
     note: str = ""
@@ -41,6 +42,7 @@ class TransactionFilter:
     amount_max_cents: int | None = None
     handler: str = ""
     keyword: str = ""
+    include_voided: bool = False
 
 
 def _now() -> str:
@@ -109,6 +111,7 @@ def create_direct_transaction(connection: sqlite3.Connection, command: CreateTra
             amount_cents=command.amount_cents,
             category_id=command.category_id,
             purpose=purpose,
+            item=command.item,
             source="direct",
             idempotency_key=idempotency_key,
             handler=command.handler,
@@ -149,6 +152,8 @@ def list_transactions(
     filters = filters or TransactionFilter()
     clauses = ["ledger_id = ?"]
     parameters: list[object] = [ledger_id]
+    if not filters.include_voided:
+        clauses.append("status <> 'voided'")
     if filters.date_from:
         clauses.append("occurred_on >= ?")
         parameters.append(filters.date_from.isoformat())
@@ -171,13 +176,19 @@ def list_transactions(
         clauses.append("COALESCE(handler, '') LIKE ? ESCAPE '\\'")
         parameters.append(f"%{_escape_like(filters.handler.strip())}%")
     if filters.keyword.strip():
-        clauses.append("(purpose LIKE ? ESCAPE '\\' OR COALESCE(note, '') LIKE ? ESCAPE '\\')")
+        clauses.append(
+            "(purpose LIKE ? ESCAPE '\\' OR COALESCE(item, '') LIKE ? ESCAPE '\\' "
+            "OR COALESCE(note, '') LIKE ? ESCAPE '\\')"
+        )
         pattern = f"%{_escape_like(filters.keyword.strip())}%"
-        parameters.extend((pattern, pattern))
+        parameters.extend((pattern, pattern, pattern))
     parameters.append(limit)
     return list(
         connection.execute(
-            f"""SELECT * FROM transactions WHERE {' AND '.join(clauses)}
+            f"""SELECT transactions.*,
+                       (SELECT COUNT(*) FROM attachments a
+                        WHERE a.entity_type='transaction' AND a.entity_id=transactions.id) AS attachment_count
+                FROM transactions WHERE {' AND '.join(clauses)}
                 ORDER BY occurred_on DESC, created_at DESC LIMIT ?""",
             parameters,
         )
@@ -195,6 +206,7 @@ def insert_linked_cash_transaction(
     purpose: str,
     source: str,
     idempotency_key: str,
+    item: str = "",
     handler: str = "",
     payment_method: str = "",
     note: str = "",
@@ -221,12 +233,12 @@ def insert_linked_cash_transaction(
     connection.execute(
         """INSERT INTO transactions
            (id, ledger_id, transaction_no, occurred_on, direction, amount_cents,
-            category_id, category_name_snapshot, purpose, handler, payment_method, note,
+            category_id, category_name_snapshot, purpose, item, handler, payment_method, note,
             status, source, idempotency_key, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
         (
             transaction_id, ledger_id, transaction_no, occurred_on.isoformat(), direction, amount_cents,
-            category_id, category["name"], purpose.strip(), handler.strip() or None,
+            category_id, category["name"], purpose.strip(), item.strip() or None, handler.strip() or None,
             payment_method.strip() or None, note.strip() or None, source, idempotency_key, now, now,
         ),
     )
@@ -276,13 +288,13 @@ def reverse_transaction(
         connection.execute(
             """INSERT INTO transactions
                (id, ledger_id, transaction_no, occurred_on, direction, amount_cents,
-                category_id, category_name_snapshot, purpose, handler, payment_method, note,
+                category_id, category_name_snapshot, purpose, item, handler, payment_method, note,
                 status, source, reversal_of_id, idempotency_key, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'reversal', ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'reversal', ?, ?, ?, ?)""",
             (
                 reversal_id, original["ledger_id"], number, occurred_on.isoformat(), direction,
                 original["amount_cents"], original["category_id"], original["category_name_snapshot"],
-                f"冲销 {original['transaction_no']}：{original['purpose']}", original["handler"],
+                f"冲销 {original['transaction_no']}：{original['purpose']}", original["item"], original["handler"],
                 original["payment_method"], reason, transaction_id, idempotency_key, now, now,
             ),
         )
