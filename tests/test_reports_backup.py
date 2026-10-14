@@ -97,19 +97,23 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
     assert sheet["V1"].value == "发票情况"
     assert sheet.auto_filter.ref == "A1:V2"
     assert {str(cell_range) for cell_range in sheet.merged_cells.ranges} == {
-        "B2:F2", "G2:M2", "N2:P2", "Q2:R2", "S2:T2", "U2:V2",
+        "B2:F2", "G2:L2", "M2:P2", "Q2:R2", "S2:T2", "U2:V2",
     }
     assert sheet["A2"].value == 1
     assert sheet["B2"].value == "'+接线端子"
     assert sheet["G2"].value == "'@AC-TMR（电网）"
-    assert sheet["N2"].value.date() == date(2026, 1, 5)
-    assert sheet["N2"].number_format == 'yyyy"."m"."d'
+    assert sheet["M2"].value.date() == date(2026, 1, 5)
+    assert sheet["M2"].number_format == 'yyyy"."m"."d'
     assert sheet["Q2"].value == 96.4
     assert sheet["Q2"].number_format == "#,##0.##"
     assert sheet["S2"].value is None
     assert sheet["U2"].value == "未提交"
     assert sheet["B2"].border.left.style == "thin"
     assert sheet["F2"].border.right.style == "thin"
+    assert sheet["L2"].border.right.style == "thin"
+    assert sheet["M2"].border.left.style == "thin"
+    assert sheet["A1"].font.sz == 11
+    assert sheet["B2"].font.sz == 11
     assert sheet.sheet_view.showGridLines is True
     assert sheet.freeze_panes == "A2"
     workbook.close()

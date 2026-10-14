@@ -9,6 +9,12 @@ def get_ledger(connection: sqlite3.Connection):
     ).fetchone()
 
 
+def get_transaction(connection: sqlite3.Connection, transaction_id: str):
+    return connection.execute(
+        "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+    ).fetchone()
+
+
 def list_categories(connection: sqlite3.Connection, ledger_id: str, category_type: str | None = None):
     sql = "SELECT id, type, name, is_active FROM categories WHERE ledger_id=?"
     parameters: list[object] = [ledger_id]
@@ -73,9 +79,10 @@ def get_setting(connection: sqlite3.Connection, ledger_id: str, key: str) -> str
 def get_dashboard_data(connection: sqlite3.Connection, ledger_id: str, month_prefix: str) -> dict:
     month = connection.execute(
         """SELECT
-               COALESCE(SUM(CASE WHEN direction='income' AND status<>'voided' THEN amount_cents ELSE 0 END),0) income,
-               COALESCE(SUM(CASE WHEN direction='expense' AND status<>'voided' THEN amount_cents ELSE 0 END),0) expense
-           FROM transactions WHERE ledger_id=? AND substr(occurred_on,1,7)=?""",
+               COALESCE(SUM(CASE WHEN direction='income' THEN amount_cents ELSE 0 END),0) income,
+               COALESCE(SUM(CASE WHEN direction='expense' THEN amount_cents ELSE 0 END),0) expense
+           FROM transactions WHERE ledger_id=? AND substr(occurred_on,1,7)=?
+               AND status='active' AND source<>'reversal'""",
         (ledger_id, month_prefix),
     ).fetchone()
     pending_reimbursements = connection.execute(
@@ -89,7 +96,7 @@ def get_dashboard_data(connection: sqlite3.Connection, ledger_id: str, month_pre
     recent = list(
         connection.execute(
             """SELECT transaction_no,occurred_on,direction,amount_cents,purpose,status
-               FROM transactions WHERE ledger_id=? AND status<>'voided'
+               FROM transactions WHERE ledger_id=? AND status='active' AND source<>'reversal'
                ORDER BY occurred_on DESC,created_at DESC LIMIT 10""",
             (ledger_id,),
         )
@@ -97,7 +104,7 @@ def get_dashboard_data(connection: sqlite3.Connection, ledger_id: str, month_pre
     categories = list(
         connection.execute(
             """SELECT direction,category_name_snapshot,SUM(amount_cents) total
-               FROM transactions WHERE ledger_id=? AND status<>'voided'
+               FROM transactions WHERE ledger_id=? AND status='active' AND source<>'reversal'
                GROUP BY direction,category_name_snapshot ORDER BY total DESC LIMIT 8""",
             (ledger_id,),
         )

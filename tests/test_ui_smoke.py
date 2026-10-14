@@ -8,7 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from college_finance_manager.application.initialize_ledger import InitializeLedgerCommand, initialize_ledger
-from college_finance_manager.ui.main_window import MainWindow, SetupDialog, TransactionDialog
+from college_finance_manager.ui.main_window import (
+    CorrectTransactionDateDialog,
+    MainWindow,
+    SetupDialog,
+    TransactionDialog,
+)
 from college_finance_manager.infrastructure.paths import AppPaths
 
 
@@ -39,5 +44,15 @@ def test_new_ledger_defaults_to_laboratory_bill(database, tmp_path):
     app = QApplication.instance() or QApplication([])
     dialog = SetupDialog(database, tmp_path)
     assert dialog.name_edit.text() == "实验室账单"
+    dialog.close()
+    app.processEvents()
+
+
+def test_date_correction_dialog_uses_calendar_and_reason(database):
+    app = QApplication.instance() or QApplication([])
+    dialog = CorrectTransactionDateDialog(date(2026, 10, 14))
+    assert dialog.date_edit.date().toPython() == date(2026, 10, 14)
+    assert dialog.date_edit.calendarPopup() is True
+    assert dialog.reason_edit.placeholderText()
     dialog.close()
     app.processEvents()

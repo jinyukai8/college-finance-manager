@@ -36,12 +36,18 @@ from college_finance_manager.application.initialize_ledger import (
     initialize_ledger,
 )
 from college_finance_manager.application.file_operations import add_attachment, export_filtered_transactions
-from college_finance_manager.application.read_models import get_dashboard_data, get_ledger, list_categories
+from college_finance_manager.application.read_models import (
+    get_dashboard_data,
+    get_ledger,
+    get_transaction,
+    list_categories,
+)
 from college_finance_manager.domain.money import parse_yuan_to_cents
 from college_finance_manager.domain.money import format_cents
 from college_finance_manager.application.transactions import (
     CreateTransactionCommand,
     TransactionFilter,
+    correct_transaction_date,
     create_direct_transaction,
     get_cash_totals,
     list_transactions,
@@ -238,6 +244,41 @@ class TransactionDialog(QDialog):
         self.accept()
 
 
+class CorrectTransactionDateDialog(QDialog):
+    def __init__(self, current_date: date, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("更正流水日期")
+        self.setMinimumWidth(420)
+        layout = QFormLayout(self)
+        self.date_edit = QDateEdit(QDate(current_date.year, current_date.month, current_date.day))
+        self.date_edit.setCalendarPopup(True)
+        self.reason_edit = QLineEdit()
+        self.reason_edit.setPlaceholderText("例如：录入时误选了日期")
+        layout.addRow("正确日期 *", self.date_edit)
+        layout.addRow("更正原因 *", self.reason_edit)
+        note = QLabel("原流水不会被删除；系统会保留原记录，并生成关联的冲销和更正记录。")
+        note.setWordWrap(True)
+        layout.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("确认更正")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def _accept_if_valid(self) -> None:
+        if not self.reason_edit.text().strip():
+            QMessageBox.warning(self, "请填写原因", "日期更正原因不能为空。")
+            return
+        self.accept()
+
+    def corrected_on(self) -> date:
+        return self.date_edit.date().toPython()
+
+    def reason(self) -> str:
+        return self.reason_edit.text().strip()
+
+
 class TransactionPage(QWidget):
     changed = Signal()
 
@@ -309,10 +350,13 @@ class TransactionPage(QWidget):
 
         actions = QHBoxLayout()
         actions.addStretch()
+        correct_date_button = QPushButton("更正日期")
+        correct_date_button.clicked.connect(self._correct_date)
         reverse_button = QPushButton("冲销所选")
         reverse_button.clicked.connect(self._reverse)
         void_button = QPushButton("作废误录")
         void_button.clicked.connect(self._void)
+        actions.addWidget(correct_date_button)
         actions.addWidget(reverse_button)
         actions.addWidget(void_button)
         attachment_button = QPushButton("查看发票/凭证")
@@ -398,6 +442,31 @@ class TransactionPage(QWidget):
             )
         except Exception as exc:
             QMessageBox.critical(self, "冲销失败", str(exc))
+            return
+        self.reload()
+        self.changed.emit()
+
+    def _correct_date(self) -> None:
+        transaction_id = self._selected_id()
+        if not transaction_id:
+            return
+        transaction = get_transaction(self.connection, transaction_id)
+        if not transaction:
+            QMessageBox.critical(self, "更正失败", "所选流水不存在。")
+            return
+        dialog = CorrectTransactionDateDialog(date.fromisoformat(transaction["occurred_on"]), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            correct_transaction_date(
+                self.connection,
+                transaction_id,
+                dialog.corrected_on(),
+                dialog.reason(),
+                idempotency_key=str(uuid4()),
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "更正失败", str(exc))
             return
         self.reload()
         self.changed.emit()

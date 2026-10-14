@@ -36,11 +36,12 @@ def test_initial_migration_creates_expected_tables_without_demo_data(database):
         for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert EXPECTED_TABLES <= tables
-    assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 2
+    assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 3
     assert database.execute("SELECT count(*) FROM ledgers").fetchone()[0] == 0
     assert database.execute("SELECT count(*) FROM transactions").fetchone()[0] == 0
     columns = {row["name"] for row in database.execute("PRAGMA table_info(transactions)")}
     assert "item" in columns
+    assert "correction_of_id" in columns
 
 
 def test_amount_and_enum_constraints_are_enforced(database):
@@ -84,7 +85,7 @@ def test_failed_migration_rolls_back_and_preserves_existing_data(database):
     ).fetchone() is None
 
 
-def test_item_migration_preserves_existing_transaction(tmp_path):
+def test_sequential_migrations_preserve_existing_transaction(tmp_path):
     from college_finance_manager.infrastructure.database import apply_migrations, connect_database
 
     connection = connect_database(tmp_path / "upgrade.db")
@@ -115,6 +116,8 @@ def test_item_migration_preserves_existing_transaction(tmp_path):
                    '历史用途', 'active', 'direct', 'now', 'now')"""
     )
     apply_migrations(connection)
-    row = connection.execute("SELECT purpose, item FROM transactions WHERE id='tx'").fetchone()
-    assert tuple(row) == ("历史用途", None)
+    row = connection.execute(
+        "SELECT purpose, item, correction_of_id FROM transactions WHERE id='tx'"
+    ).fetchone()
+    assert tuple(row) == ("历史用途", None, None)
     connection.close()

@@ -28,4 +28,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Installer build failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "Installer created: $DeployRoot\installer\CollegeFinanceManager-Setup-0.4.0.exe"
+Write-Host "Installer created: $DeployRoot\installer\CollegeFinanceManager-Setup-0.4.1.exe"

@@ -10,6 +10,7 @@ from college_finance_manager.application.transactions import (
     TransactionFilter,
     TransactionRuleError,
     create_direct_transaction,
+    correct_transaction_date,
     get_cash_totals,
     list_transactions,
     rename_category,
@@ -92,6 +93,78 @@ def test_reversal_preserves_both_records_and_cancels_cash_effect(database, tmp_p
     )
     assert duplicate == reversal_id
     assert database.execute("SELECT count(*) FROM transactions").fetchone()[0] == 2
+
+
+def test_date_correction_preserves_history_and_moves_effect_to_new_date(database, tmp_path):
+    ledger_id, categories = _initialized(database, tmp_path)
+    original_id = create_direct_transaction(
+        database,
+        CreateTransactionCommand(
+            ledger_id=ledger_id,
+            occurred_on=date(2026, 1, 31),
+            direction="expense",
+            amount_cents=12_345,
+            category_id=categories["expense"],
+            purpose="日期填错",
+            item="传感器",
+            idempotency_key="date-original",
+        ),
+    )
+
+    correction_id = correct_transaction_date(
+        database,
+        original_id,
+        date(2026, 2, 1),
+        "录入日期错误",
+        idempotency_key="date-correction",
+    )
+
+    original = database.execute(
+        "SELECT status, occurred_on FROM transactions WHERE id=?", (original_id,)
+    ).fetchone()
+    correction = database.execute(
+        """SELECT status, source, correction_of_id, occurred_on, amount_cents,
+                  purpose, item FROM transactions WHERE id=?""",
+        (correction_id,),
+    ).fetchone()
+    reversal = database.execute(
+        "SELECT source, reversal_of_id, occurred_on FROM transactions WHERE reversal_of_id=?",
+        (original_id,),
+    ).fetchone()
+    assert tuple(original) == ("reversed", "2026-01-31")
+    assert tuple(correction) == (
+        "active", "correction", original_id, "2026-02-01", 12_345, "日期填错", "传感器"
+    )
+    assert tuple(reversal) == ("reversal", original_id, "2026-01-31")
+    assert get_cash_totals(database, ledger_id).balance_cents == 87_655
+    assert get_dashboard_data(database, ledger_id, "2026-01")["month_expense_cents"] == 0
+    assert get_dashboard_data(database, ledger_id, "2026-02")["month_expense_cents"] == 12_345
+    active_rows = list_transactions(database, ledger_id)
+    assert [row["id"] for row in active_rows] == [correction_id]
+    audit = database.execute(
+        "SELECT action, reason FROM audit_logs WHERE entity_id=? ORDER BY created_at DESC LIMIT 1",
+        (original_id,),
+    ).fetchone()
+    assert tuple(audit) == ("date_corrected", "录入日期错误")
+
+
+def test_date_correction_rejects_same_date_without_partial_records(database, tmp_path):
+    ledger_id, categories = _initialized(database, tmp_path)
+    original_id = _record(
+        database, ledger_id, categories["expense"], "expense", 500, "same-date"
+    )
+
+    with pytest.raises(TransactionRuleError, match="新日期必须与原日期不同"):
+        correct_transaction_date(
+            database,
+            original_id,
+            date(2026, 1, 2),
+            "日期填错",
+            idempotency_key="same-date-correction",
+        )
+
+    assert database.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 1
+    assert database.execute("SELECT status FROM transactions WHERE id=?", (original_id,)).fetchone()[0] == "active"
 
 
 def test_void_keeps_trace_but_removes_unrealized_cash_effect(database, tmp_path):

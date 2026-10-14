@@ -1,5 +1,5 @@
 #define MyAppName "学院组织资金管理助手"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.4.1"
 #define MyAppPublisher "jinyukai8"
 #define MyAppExeName "CollegeFinanceManager.exe"
 

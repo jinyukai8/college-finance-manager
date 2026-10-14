@@ -90,7 +90,8 @@ def export_financial_report(
         """SELECT direction, COALESCE(category_name_snapshot, '未分类') AS category_name,
                   SUM(amount_cents) AS total
            FROM transactions
-           WHERE ledger_id=? AND occurred_on BETWEEN ? AND ? AND status <> 'voided'
+           WHERE ledger_id=? AND occurred_on BETWEEN ? AND ?
+                 AND status = 'active' AND source <> 'reversal'
            GROUP BY direction, category_name_snapshot ORDER BY direction, total DESC""",
         (ledger_id, date_from.isoformat(), date_to.isoformat()),
     ):
@@ -188,7 +189,7 @@ def export_transaction_rows(
         output[0] = sequence
         output[1] = safe_excel_text(row["item"])
         output[6] = safe_excel_text(row["purpose"])
-        output[13] = date.fromisoformat(row["occurred_on"])
+        output[12] = date.fromisoformat(row["occurred_on"])
         output[16] = Decimal(row["amount_cents"]) / 100
         output[18] = None
         output[20] = (
@@ -200,8 +201,8 @@ def export_transaction_rows(
         excel_row = sequence + 1
         for cell_range in (
             f"B{excel_row}:F{excel_row}",
-            f"G{excel_row}:M{excel_row}",
-            f"N{excel_row}:P{excel_row}",
+            f"G{excel_row}:L{excel_row}",
+            f"M{excel_row}:P{excel_row}",
             f"Q{excel_row}:R{excel_row}",
             f"S{excel_row}:T{excel_row}",
             f"U{excel_row}:V{excel_row}",
@@ -209,11 +210,11 @@ def export_transaction_rows(
             sheet.merge_cells(cell_range)
 
     thin = Side(style="thin", color="000000")
-    group_left = {1, 2, 7, 14, 17, 19, 21}
-    group_right = {1, 6, 13, 16, 18, 20, 22}
+    group_left = {1, 2, 7, 13, 17, 19, 21}
+    group_right = {1, 6, 12, 16, 18, 20, 22}
     for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, min_col=1, max_col=22):
         for cell in row:
-            cell.font = Font(name="宋体", size=12)
+            cell.font = Font(name="宋体", size=11)
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = Border(
                 left=thin if cell.column in group_left else Side(style=None),
@@ -222,7 +223,7 @@ def export_transaction_rows(
                 bottom=thin,
             )
     for row_number in range(2, sheet.max_row + 1):
-        sheet[f"N{row_number}"].number_format = 'yyyy"."m"."d'
+        sheet[f"M{row_number}"].number_format = 'yyyy"."m"."d'
         sheet[f"Q{row_number}"].number_format = "#,##0.##"
 
     sheet.row_dimensions[1].height = 24

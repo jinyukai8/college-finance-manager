@@ -17,27 +17,12 @@ New-Item -ItemType Directory -Force -Path $DistRoot, $BuildRoot, $SpecRoot | Out
 Push-Location $SourceRoot
 try {
     # 先把当前源码重新安装到专用构建环境，避免 PyInstaller 的数据收集读取旧版本。
-    & $PythonExe -m pip install `
-        --disable-pip-version-check `
-        --no-deps `
-        --no-build-isolation `
-        --force-reinstall `
-        $SourceRoot
-    if ($LASTEXITCODE -ne 0) {
+    & $PythonExe -m pip install --disable-pip-version-check --no-deps --no-build-isolation --force-reinstall $SourceRoot
+    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
         throw "当前源码安装到构建环境失败，退出码 $LASTEXITCODE"
     }
-    & $PythonExe -m PyInstaller `
-        --noconfirm `
-        --clean `
-        --windowed `
-        --name "CollegeFinanceManager" `
-        --distpath $DistRoot `
-        --workpath $BuildRoot `
-        --specpath $SpecRoot `
-        --paths (Join-Path $SourceRoot "src") `
-        --collect-data "college_finance_manager" `
-        (Join-Path $SourceRoot "src\college_finance_manager\__main__.py")
-    if ($LASTEXITCODE -ne 0) {
+    & $PythonExe -m PyInstaller --noconfirm --clean --windowed --name "CollegeFinanceManager" --distpath $DistRoot --workpath $BuildRoot --specpath $SpecRoot --paths (Join-Path $SourceRoot "src") --collect-data "college_finance_manager" (Join-Path $SourceRoot "src\college_finance_manager\__main__.py")
+    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
         throw "PyInstaller 构建失败，退出码 $LASTEXITCODE"
     }
 }

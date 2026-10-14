@@ -46,7 +46,7 @@ class TransactionFilter:
 
 
 def _now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now().astimezone().isoformat(timespec="microseconds")
 
 
 def _audit(
@@ -136,7 +136,7 @@ def get_cash_totals(connection: sqlite3.Connection, ledger_id: str) -> CashTotal
                COALESCE(SUM(CASE WHEN direction = 'income' THEN amount_cents ELSE 0 END), 0) AS income,
                COALESCE(SUM(CASE WHEN direction = 'expense' THEN amount_cents ELSE 0 END), 0) AS expense
            FROM transactions
-           WHERE ledger_id = ? AND status <> 'voided'""",
+           WHERE ledger_id = ? AND status = 'active' AND source <> 'reversal'""",
         (ledger_id,),
     ).fetchone()
     return CashTotals(ledger["opening_balance_cents"], row["income"], row["expense"])
@@ -153,7 +153,7 @@ def list_transactions(
     clauses = ["ledger_id = ?"]
     parameters: list[object] = [ledger_id]
     if not filters.include_voided:
-        clauses.append("status <> 'voided'")
+        clauses.extend(("status = 'active'", "source <> 'reversal'"))
     if filters.date_from:
         clauses.append("occurred_on >= ?")
         parameters.append(filters.date_from.isoformat())
@@ -305,6 +305,119 @@ def reverse_transaction(
         _audit(connection, original["ledger_id"], "transaction", reversal_id, "created", {"source": "reversal", "original_id": transaction_id}, reason)
         connection.commit()
         return reversal_id
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def correct_transaction_date(
+    connection: sqlite3.Connection,
+    transaction_id: str,
+    new_date: date,
+    reason: str,
+    *,
+    idempotency_key: str,
+) -> str:
+    """Correct a direct transaction date without rewriting its history.
+
+    The original is marked reversed, an equal and opposite record neutralizes it
+    on its original date, and a linked correction recreates the cash effect on
+    the requested date. Attachments follow the active correction record while
+    their files remain unchanged.
+    """
+    reason = reason.strip()
+    idempotency_key = idempotency_key.strip()
+    if not isinstance(new_date, date):
+        raise TransactionRuleError("更正日期无效")
+    if not reason:
+        raise TransactionRuleError("日期更正原因不能为空")
+    if not idempotency_key:
+        raise TransactionRuleError("日期更正必须提供幂等键")
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        duplicate = connection.execute(
+            "SELECT id FROM transactions WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        if duplicate:
+            connection.commit()
+            return duplicate["id"]
+
+        original = connection.execute(
+            "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+        if not original:
+            raise TransactionNotFound("原流水不存在")
+        if original["status"] != "active" or original["source"] not in {"direct", "correction"}:
+            raise TransactionRuleError("仅有效的直接收支或更正流水可以修改日期")
+        if original["occurred_on"] == new_date.isoformat():
+            raise TransactionRuleError("新日期必须与原日期不同")
+
+        ledger_id = original["ledger_id"]
+        now = _now()
+        reversal_id = str(uuid4())
+        reversal_number = _next_transaction_number(connection, ledger_id)
+        reversal_direction = "expense" if original["direction"] == "income" else "income"
+        connection.execute(
+            """INSERT INTO transactions
+               (id, ledger_id, transaction_no, occurred_on, direction, amount_cents,
+                category_id, category_name_snapshot, purpose, item, handler, payment_method, note,
+                status, source, reversal_of_id, idempotency_key, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'reversal', ?, ?, ?, ?)""",
+            (
+                reversal_id, ledger_id, reversal_number, original["occurred_on"], reversal_direction,
+                original["amount_cents"], original["category_id"], original["category_name_snapshot"],
+                f"日期更正冲销 {original['transaction_no']}：{original['purpose']}", original["item"],
+                original["handler"], original["payment_method"], reason, transaction_id,
+                f"{idempotency_key}:reversal", now, now,
+            ),
+        )
+
+        correction_id = str(uuid4())
+        correction_number = _next_transaction_number(connection, ledger_id)
+        connection.execute(
+            """INSERT INTO transactions
+               (id, ledger_id, transaction_no, occurred_on, direction, amount_cents,
+                category_id, category_name_snapshot, purpose, item, handler, payment_method, note,
+                status, source, correction_of_id, idempotency_key, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'correction', ?, ?, ?, ?)""",
+            (
+                correction_id, ledger_id, correction_number, new_date.isoformat(), original["direction"],
+                original["amount_cents"], original["category_id"], original["category_name_snapshot"],
+                original["purpose"], original["item"], original["handler"], original["payment_method"],
+                original["note"], transaction_id, idempotency_key, now, now,
+            ),
+        )
+        moved_attachments = connection.execute(
+            """UPDATE attachments SET entity_id = ?
+               WHERE entity_type = 'transaction' AND entity_id = ?""",
+            (correction_id, transaction_id),
+        ).rowcount
+        connection.execute(
+            "UPDATE transactions SET status = 'reversed', updated_at = ? WHERE id = ?",
+            (now, transaction_id),
+        )
+        _audit(
+            connection, ledger_id, "transaction", transaction_id, "date_corrected",
+            {
+                "from": original["occurred_on"], "to": new_date.isoformat(),
+                "reversal_id": reversal_id, "correction_id": correction_id,
+                "moved_attachments": moved_attachments,
+            },
+            reason,
+        )
+        _audit(
+            connection, ledger_id, "transaction", reversal_id, "created",
+            {"source": "reversal", "original_id": transaction_id, "reason": "date_correction"},
+            reason,
+        )
+        _audit(
+            connection, ledger_id, "transaction", correction_id, "created",
+            {"source": "correction", "original_id": transaction_id},
+            reason,
+        )
+        connection.commit()
+        return correction_id
     except Exception:
         connection.rollback()
         raise
