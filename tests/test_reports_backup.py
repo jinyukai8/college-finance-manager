@@ -81,6 +81,19 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
             idempotency_key="laboratory-export",
         ),
     )
+    create_direct_transaction(
+        database,
+        CreateTransactionCommand(
+            ledger_id=ledger,
+            occurred_on=date(2026, 1, 6),
+            direction="expense",
+            amount_cents=5_300,
+            category_id=expense_category,
+            purpose="整数价格",
+            item="样品",
+            idempotency_key="laboratory-export-integer",
+        ),
+    )
     output = export_transaction_rows(
         list_transactions(database, ledger),
         tmp_path / "filtered.xlsx",
@@ -95,9 +108,10 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
     assert sheet["R1"].value == "价格"
     assert sheet["T1"].value == "金额"
     assert sheet["V1"].value == "发票情况"
-    assert sheet.auto_filter.ref == "A1:V2"
+    assert sheet.auto_filter.ref == "A1:V3"
     assert {str(cell_range) for cell_range in sheet.merged_cells.ranges} == {
         "B2:F2", "G2:L2", "M2:P2", "Q2:R2", "S2:T2", "U2:V2",
+        "B3:F3", "G3:L3", "M3:P3", "Q3:R3", "S3:T3", "U3:V3",
     }
     assert sheet["A2"].value == 1
     assert sheet["B2"].value == "'+接线端子"
@@ -105,7 +119,9 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
     assert sheet["M2"].value.date() == date(2026, 1, 5)
     assert sheet["M2"].number_format == 'yyyy"."m"."d'
     assert sheet["Q2"].value == 96.4
-    assert sheet["Q2"].number_format == "#,##0.##"
+    assert sheet["Q2"].number_format == "General"
+    assert sheet["Q3"].value == 53
+    assert sheet["Q3"].number_format == "General"
     assert sheet["S2"].value is None
     assert sheet["U2"].value == "未提交"
     assert sheet["B2"].border.left.style == "thin"

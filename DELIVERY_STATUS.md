@@ -1,7 +1,7 @@
 # 阶段交付状态
 
 日期：2026-10-14
-版本：0.4.1
+版本：0.4.2
 
 ## A：基础设施
 
@@ -21,7 +21,7 @@
 
 ## E：验收与 Windows 构建
 
-通过 20 笔跨 3 个月模拟账本验收和 51 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。0.4.1 打包程序在隔离数据目录启动并验证；安装/卸载保数流程沿用已验证的安装框架。为保护正式账本，构建验收不使用正式数据目录。
+通过 20 笔跨 3 个月模拟账本验收和 51 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。0.4.2 打包程序在隔离数据目录启动并验证；安装/卸载保数流程沿用已验证的安装框架。为保护正式账本，构建验收不使用正式数据目录。
 
 ## 测试结果
 

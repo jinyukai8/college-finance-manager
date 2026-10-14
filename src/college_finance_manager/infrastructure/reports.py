@@ -224,7 +224,6 @@ def export_transaction_rows(
             )
     for row_number in range(2, sheet.max_row + 1):
         sheet[f"M{row_number}"].number_format = 'yyyy"."m"."d'
-        sheet[f"Q{row_number}"].number_format = "#,##0.##"
 
     sheet.row_dimensions[1].height = 24
     for row_number in range(2, sheet.max_row + 1):
