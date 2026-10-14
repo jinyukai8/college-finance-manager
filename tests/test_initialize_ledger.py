@@ -41,7 +41,7 @@ def test_rename_ledger_is_audited_and_preserves_financial_history(database, tmp_
         "SELECT COUNT(*) FROM transactions WHERE ledger_id=?", (ledger_id,)
     ).fetchone()[0]
 
-    rename_ledger(database, ledger_id, " 实验室账单 ")
+    rename_ledger(database, ledger_id, " 实验室账本 ")
 
     ledger = database.execute("SELECT * FROM ledgers WHERE id=?", (ledger_id,)).fetchone()
     audit = database.execute(
@@ -50,13 +50,13 @@ def test_rename_ledger_is_audited_and_preserves_financial_history(database, tmp_
            ORDER BY created_at DESC LIMIT 1""",
         (ledger_id, ledger_id),
     ).fetchone()
-    assert ledger["name"] == "实验室账单"
+    assert ledger["name"] == "实验室账本"
     assert database.execute(
         "SELECT COUNT(*) FROM transactions WHERE ledger_id=?", (ledger_id,)
     ).fetchone()[0] == before
     assert audit["action"] == "renamed"
     assert '"from": "原账本"' in audit["change_summary"]
-    assert '"to": "实验室账单"' in audit["change_summary"]
+    assert '"to": "实验室账本"' in audit["change_summary"]
 
 
 def test_rename_ledger_rejects_blank_name_without_changes(database, tmp_path):

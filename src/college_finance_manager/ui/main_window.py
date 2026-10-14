@@ -76,7 +76,7 @@ class SetupDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
         form = QFormLayout()
-        self.name_edit = QLineEdit("实验室账单")
+        self.name_edit = QLineEdit("实验室账本")
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate.currentDate())
@@ -496,7 +496,7 @@ class TransactionPage(QWidget):
             self.reload()
 
     def _export(self) -> None:
-        filename, _ = QFileDialog.getSaveFileName(self, "导出实验室账单", "实验室账单.xlsx", "Excel (*.xlsx)")
+        filename, _ = QFileDialog.getSaveFileName(self, "导出实验室账本", "实验室账本.xlsx", "Excel (*.xlsx)")
         if not filename:
             return
         filters = TransactionFilter(
@@ -513,7 +513,7 @@ class TransactionPage(QWidget):
             export_filtered_transactions(
                 rows,
                 Path(filename),
-                ledger_name=ledger["name"] if ledger else "实验室账单",
+                ledger_name=ledger["name"] if ledger else "实验室账本",
             )
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
@@ -533,7 +533,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.connection = connection
         self.paths = paths
-        self.setWindowTitle("学院组织资金管理助手")
+        self.setWindowTitle("实验室账本")
         self.setMinimumSize(1024, 680)
         container = QWidget()
         root = QHBoxLayout(container)

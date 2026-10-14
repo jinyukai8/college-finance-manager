@@ -84,7 +84,7 @@ def export_report(
 
 
 def export_filtered_transactions(
-    rows: list[sqlite3.Row], destination: Path, *, ledger_name: str = "实验室账单"
+    rows: list[sqlite3.Row], destination: Path, *, ledger_name: str = "实验室账本"
 ) -> Path:
     return export_transaction_rows(rows, destination, ledger_name=ledger_name)
 

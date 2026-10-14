@@ -1,5 +1,5 @@
-#define MyAppName "学院组织资金管理助手"
-#define MyAppVersion "0.4.2"
+#define MyAppName "实验室账本"
+#define MyAppVersion "0.4.3"
 #define MyAppPublisher "jinyukai8"
 #define MyAppExeName "CollegeFinanceManager.exe"
 
@@ -33,6 +33,11 @@ Name: "D:\CollegeFinanceManager\data\backups"
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--data-dir ""D:\CollegeFinanceManager\data"""
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--data-dir ""D:\CollegeFinanceManager\data"""; Tasks: desktopicon
+
+[InstallDelete]
+; 品牌更名后清理旧名称快捷方式，不涉及程序数据或账本数据。
+Type: files; Name: "{autoprograms}\学院组织资金管理助手.lnk"
+Type: files; Name: "{autodesktop}\学院组织资金管理助手.lnk"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked

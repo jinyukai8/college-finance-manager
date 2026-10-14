@@ -25,7 +25,7 @@ from college_finance_manager.ui.main_window import MainWindow, SetupDialog
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="学院组织资金管理助手")
+    parser = argparse.ArgumentParser(description="实验室账本")
     parser.add_argument(
         "--data-dir",
         type=Path,

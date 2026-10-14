@@ -97,10 +97,10 @@ def test_filtered_transaction_export_is_safe(database, tmp_path):
     output = export_transaction_rows(
         list_transactions(database, ledger),
         tmp_path / "filtered.xlsx",
-        ledger_name="实验室账单",
+        ledger_name="实验室账本",
     )
     workbook = load_workbook(output, data_only=False)
-    sheet = workbook["实验室账单"]
+    sheet = workbook["实验室账本"]
     assert sheet["A1"].value == "序号"
     assert sheet["D1"].value == "设备名称"
     assert sheet["J1"].value == "用途"

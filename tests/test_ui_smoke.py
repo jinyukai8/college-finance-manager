@@ -23,6 +23,7 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     paths = AppPaths.from_root(tmp_path / "app")
     paths.ensure_directories()
     window = MainWindow(database, paths, lambda _path: None)
+    assert window.windowTitle() == "实验室账本"
     assert window.minimumWidth() == 1024
     assert window.navigation.count() == 7
     assert window.pages.count() == 7
@@ -40,10 +41,10 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     app.processEvents()
 
 
-def test_new_ledger_defaults_to_laboratory_bill(database, tmp_path):
+def test_new_ledger_defaults_to_laboratory_ledger(database, tmp_path):
     app = QApplication.instance() or QApplication([])
     dialog = SetupDialog(database, tmp_path)
-    assert dialog.name_edit.text() == "实验室账单"
+    assert dialog.name_edit.text() == "实验室账本"
     dialog.close()
     app.processEvents()
 

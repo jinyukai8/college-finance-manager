@@ -152,14 +152,14 @@ def _safe_worksheet_title(value: str) -> str:
     title = value.strip()
     for character in "[]:*?/\\":
         title = title.replace(character, "-")
-    return title[:31] or "实验室账单"
+    return title[:31] or "实验室账本"
 
 
 def export_transaction_rows(
     rows: list[sqlite3.Row],
     destination: Path,
     *,
-    ledger_name: str = "实验室账单",
+    ledger_name: str = "实验室账本",
 ) -> Path:
     """Export filtered expense rows in the laboratory purchase-ledger layout."""
     workbook = Workbook()
