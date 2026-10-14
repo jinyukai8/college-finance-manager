@@ -43,7 +43,9 @@ from college_finance_manager.application.file_operations import (
     resolve_verified_attachment,
     verify_backup,
 )
+from college_finance_manager.application.ledgers import rename_ledger
 from college_finance_manager.application.read_models import (
+    get_ledger,
     list_advances,
     list_attachments,
     list_categories,
@@ -492,6 +494,7 @@ class ReportsPage(QWidget):
 
 class SettingsPage(QWidget):
     categories_changed = Signal()
+    ledger_renamed = Signal(str)
 
     def __init__(self, connection, paths: AppPaths, ledger_id: str, restore_callback: Callable[[Path], None], parent=None) -> None:
         super().__init__(parent)
@@ -499,6 +502,15 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.addWidget(_heading("设置与备份"))
+        ledger = get_ledger(connection)
+        ledger_name_row = QHBoxLayout()
+        self.ledger_name_edit = QLineEdit(ledger["name"] if ledger else "")
+        rename_ledger_button = QPushButton("修改账本名称")
+        rename_ledger_button.clicked.connect(self._rename_ledger)
+        ledger_name_row.addWidget(QLabel("账本名称"))
+        ledger_name_row.addWidget(self.ledger_name_edit, 1)
+        ledger_name_row.addWidget(rename_ledger_button)
+        layout.addLayout(ledger_name_row)
         info = QLabel(f"数据目录：{paths.root}\n凭证目录：{paths.attachments}\n备份目录：{paths.backups}")
         info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(info)
@@ -539,6 +551,17 @@ class SettingsPage(QWidget):
         layout.addStretch()
         self._reload_categories()
         self.categories_changed.emit()
+
+    def _rename_ledger(self):
+        try:
+            rename_ledger(self.connection, self.ledger_id, self.ledger_name_edit.text())
+        except Exception as exc:
+            QMessageBox.critical(self, "重命名失败", str(exc))
+            return
+        name = get_ledger(self.connection)["name"]
+        self.ledger_name_edit.setText(name)
+        self.ledger_renamed.emit(name)
+        QMessageBox.information(self, "修改完成", f"账本名称已改为：{name}")
 
     def _reload_categories(self):
         rows = list_categories(self.connection, self.ledger_id)

@@ -70,7 +70,7 @@ class SetupDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
         form = QFormLayout()
-        self.name_edit = QLineEdit("学院组织账本")
+        self.name_edit = QLineEdit("实验室账单")
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate.currentDate())
@@ -427,7 +427,7 @@ class TransactionPage(QWidget):
             self.reload()
 
     def _export(self) -> None:
-        filename, _ = QFileDialog.getSaveFileName(self, "导出筛选流水", "筛选流水.xlsx", "Excel (*.xlsx)")
+        filename, _ = QFileDialog.getSaveFileName(self, "导出实验室账单", "实验室账单.xlsx", "Excel (*.xlsx)")
         if not filename:
             return
         filters = TransactionFilter(
@@ -440,7 +440,12 @@ class TransactionPage(QWidget):
         )
         try:
             rows = list_transactions(self.connection, self.ledger_id, filters, limit=100000)
-            export_filtered_transactions(rows, Path(filename))
+            ledger = get_ledger(self.connection)
+            export_filtered_transactions(
+                rows,
+                Path(filename),
+                ledger_name=ledger["name"] if ledger else "实验室账单",
+            )
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
@@ -484,6 +489,7 @@ class MainWindow(QMainWindow):
             self.pages.addWidget(ReportsPage(connection, ledger["id"], self))
             settings_page = SettingsPage(connection, paths, ledger["id"], restore_callback, self)
             settings_page.categories_changed.connect(self.transaction_page.reload_categories)
+            settings_page.ledger_renamed.connect(self._refresh_ledger_name)
             self.pages.addWidget(settings_page)
             self.recycle_bin_page = RecycleBinPage(connection, ledger["id"], self)
             self.transaction_page.changed.connect(self.recycle_bin_page.reload)
@@ -526,7 +532,8 @@ class MainWindow(QMainWindow):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 18, 20, 18)
         if ledger:
-            card_layout.addWidget(QLabel(ledger["name"]))
+            self.ledger_name_label = QLabel(ledger["name"])
+            card_layout.addWidget(self.ledger_name_label)
             totals = get_cash_totals(self.connection, ledger["id"])
             self.balance_value = QLabel(f"¥ {format_cents(totals.balance_cents)}")
             value = self.balance_value
@@ -590,6 +597,10 @@ class MainWindow(QMainWindow):
         self.balance_value.setStyleSheet(f"font-size: 30px; font-weight: 600; color: {color};")
         dashboard = get_dashboard_data(self.connection, ledger["id"], date.today().strftime("%Y-%m"))
         self._fill_recent(dashboard["recent"])
+
+    def _refresh_ledger_name(self, name: str) -> None:
+        if hasattr(self, "ledger_name_label"):
+            self.ledger_name_label.setText(name)
 
     @staticmethod
     def _build_placeholder(title: str) -> QWidget:

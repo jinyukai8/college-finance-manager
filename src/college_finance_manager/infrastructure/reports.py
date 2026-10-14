@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from college_finance_manager.application.transactions import get_cash_totals
 
@@ -147,37 +147,97 @@ def export_financial_report(
     return destination
 
 
-def export_transaction_rows(rows: list[sqlite3.Row], destination: Path) -> Path:
+def _safe_worksheet_title(value: str) -> str:
+    title = value.strip()
+    for character in "[]:*?/\\":
+        title = title.replace(character, "-")
+    return title[:31] or "实验室账单"
+
+
+def export_transaction_rows(
+    rows: list[sqlite3.Row],
+    destination: Path,
+    *,
+    ledger_name: str = "实验室账单",
+) -> Path:
+    """Export filtered expense rows in the laboratory purchase-ledger layout."""
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "筛选流水"
-    sheet.sheet_view.showGridLines = False
+    sheet.title = _safe_worksheet_title(ledger_name)
+    sheet.sheet_view.showGridLines = True
     sheet.freeze_panes = "A2"
-    sheet.append((
-        "编号", "发生日期", "类型", "金额（元）", "类别", "用途/来源", "物品",
-        "发票状态", "经办人", "支付方式", "状态", "来源",
-    ))
-    for row in rows:
-        sheet.append((
-            row["transaction_no"], date.fromisoformat(row["occurred_on"]),
-            "收入" if row["direction"] == "income" else "支出",
-            Decimal(row["amount_cents"]) / 100, safe_excel_text(row["category_name_snapshot"]),
-            safe_excel_text(row["purpose"]), safe_excel_text(row["item"]),
-            f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
-            safe_excel_text(row["handler"]),
-            safe_excel_text(row["payment_method"]), row["status"], row["source"],
-        ))
-    for cell in sheet[1]:
-        cell.font = Font(name="Arial", bold=True, color="FFFFFF")
-        cell.fill = PatternFill("solid", fgColor="1F4E78")
-        cell.alignment = Alignment(horizontal="center")
-    for cell in sheet["B"][1:]:
-        cell.number_format = "yyyy-mm-dd"
-    for cell in sheet["D"][1:]:
-        cell.number_format = '#,##0.00;[Red](#,##0.00);-'
-    widths = (16, 12, 8, 14, 14, 30, 16, 14, 14, 14, 10, 16)
-    for index, width in enumerate(widths, 1):
-        sheet.column_dimensions[sheet.cell(1, index).column_letter].width = width
+    headers: list[str | None] = [None] * 22
+    for column, label in {
+        1: "序号",
+        4: "设备名称",
+        10: "用途",
+        15: "购买时间",
+        18: "价格",
+        20: "金额",
+        22: "发票情况",
+    }.items():
+        headers[column - 1] = label
+    sheet.append(headers)
+
+    expense_rows = sorted(
+        (row for row in rows if row["direction"] == "expense"),
+        key=lambda row: (row["occurred_on"], row["transaction_no"]),
+    )
+    for sequence, row in enumerate(expense_rows, 1):
+        output: list[object | None] = [None] * 22
+        output[0] = sequence
+        output[1] = safe_excel_text(row["item"])
+        output[6] = safe_excel_text(row["purpose"])
+        output[13] = date.fromisoformat(row["occurred_on"])
+        output[16] = Decimal(row["amount_cents"]) / 100
+        output[18] = None
+        output[20] = (
+            f"已提交（{row['attachment_count']}）"
+            if row["attachment_count"]
+            else "未提交"
+        )
+        sheet.append(output)
+        excel_row = sequence + 1
+        for cell_range in (
+            f"B{excel_row}:F{excel_row}",
+            f"G{excel_row}:M{excel_row}",
+            f"N{excel_row}:P{excel_row}",
+            f"Q{excel_row}:R{excel_row}",
+            f"S{excel_row}:T{excel_row}",
+            f"U{excel_row}:V{excel_row}",
+        ):
+            sheet.merge_cells(cell_range)
+
+    thin = Side(style="thin", color="000000")
+    group_left = {1, 2, 7, 14, 17, 19, 21}
+    group_right = {1, 6, 13, 16, 18, 20, 22}
+    for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, min_col=1, max_col=22):
+        for cell in row:
+            cell.font = Font(name="宋体", size=12)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = Border(
+                left=thin if cell.column in group_left else Side(style=None),
+                right=thin if cell.column in group_right else Side(style=None),
+                top=thin,
+                bottom=thin,
+            )
+    for row_number in range(2, sheet.max_row + 1):
+        sheet[f"N{row_number}"].number_format = 'yyyy"."m"."d'
+        sheet[f"Q{row_number}"].number_format = "#,##0.##"
+
+    sheet.row_dimensions[1].height = 24
+    for row_number in range(2, sheet.max_row + 1):
+        sheet.row_dimensions[row_number].height = 22
+    sheet.column_dimensions["A"].width = 10
+    for column in range(2, 23):
+        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 10.5
+    sheet.auto_filter.ref = f"A1:V{sheet.max_row}"
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:V{sheet.max_row}"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
     destination.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(destination)
     load_workbook(destination, read_only=True).close()

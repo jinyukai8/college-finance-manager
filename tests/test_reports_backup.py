@@ -65,9 +65,51 @@ def test_backup_restore_preserves_database_and_attachment_hash(database, tmp_pat
 
 def test_filtered_transaction_export_is_safe(database, tmp_path):
     ledger = _data(database, tmp_path)
-    output = export_transaction_rows(list_transactions(database, ledger), tmp_path / "filtered.xlsx")
+    expense_category = database.execute(
+        "SELECT id FROM categories WHERE ledger_id=? AND type='expense' LIMIT 1", (ledger,)
+    ).fetchone()[0]
+    create_direct_transaction(
+        database,
+        CreateTransactionCommand(
+            ledger_id=ledger,
+            occurred_on=date(2026, 1, 5),
+            direction="expense",
+            amount_cents=9_640,
+            category_id=expense_category,
+            purpose="@AC-TMR（电网）",
+            item="+接线端子",
+            idempotency_key="laboratory-export",
+        ),
+    )
+    output = export_transaction_rows(
+        list_transactions(database, ledger),
+        tmp_path / "filtered.xlsx",
+        ledger_name="实验室账单",
+    )
     workbook = load_workbook(output, data_only=False)
-    assert workbook["筛选流水"]["F2"].value == "'=1+1"
-    assert workbook["筛选流水"]["G2"].value == "纪念徽章"
-    assert workbook["筛选流水"]["H2"].value == "未提交"
+    sheet = workbook["实验室账单"]
+    assert sheet["A1"].value == "序号"
+    assert sheet["D1"].value == "设备名称"
+    assert sheet["J1"].value == "用途"
+    assert sheet["O1"].value == "购买时间"
+    assert sheet["R1"].value == "价格"
+    assert sheet["T1"].value == "金额"
+    assert sheet["V1"].value == "发票情况"
+    assert sheet.auto_filter.ref == "A1:V2"
+    assert {str(cell_range) for cell_range in sheet.merged_cells.ranges} == {
+        "B2:F2", "G2:M2", "N2:P2", "Q2:R2", "S2:T2", "U2:V2",
+    }
+    assert sheet["A2"].value == 1
+    assert sheet["B2"].value == "'+接线端子"
+    assert sheet["G2"].value == "'@AC-TMR（电网）"
+    assert sheet["N2"].value.date() == date(2026, 1, 5)
+    assert sheet["N2"].number_format == 'yyyy"."m"."d'
+    assert sheet["Q2"].value == 96.4
+    assert sheet["Q2"].number_format == "#,##0.##"
+    assert sheet["S2"].value is None
+    assert sheet["U2"].value == "未提交"
+    assert sheet["B2"].border.left.style == "thin"
+    assert sheet["F2"].border.right.style == "thin"
+    assert sheet.sheet_view.showGridLines is True
+    assert sheet.freeze_panes == "A2"
     workbook.close()

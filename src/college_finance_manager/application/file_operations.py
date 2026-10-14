@@ -83,8 +83,10 @@ def export_report(
     )
 
 
-def export_filtered_transactions(rows: list[sqlite3.Row], destination: Path) -> Path:
-    return export_transaction_rows(rows, destination)
+def export_filtered_transactions(
+    rows: list[sqlite3.Row], destination: Path, *, ledger_name: str = "实验室账单"
+) -> Path:
+    return export_transaction_rows(rows, destination, ledger_name=ledger_name)
 
 
 def create_manual_backup(connection: sqlite3.Connection, *, paths: AppPaths) -> Path:
