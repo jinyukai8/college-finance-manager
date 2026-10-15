@@ -25,6 +25,14 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     window = MainWindow(database, paths, lambda _path: None)
     assert window.windowTitle() == "实验室账本"
     assert window.minimumWidth() == 1024
+    assert window.navigation.width() == 224
+    assert window.brand_title.text() == "实验室账本"
+    assert window.brand_subtitle.text() == "本地离线 · 安全记账"
+    assert window.balance_value.objectName() == "balanceValue"
+    assert window.month_income_value.objectName() == "metricValue"
+    assert window.month_expense_value.objectName() == "metricValue"
+    assert "QPushButton#primaryButton" in window.styleSheet()
+    assert "QTableWidget" in window.styleSheet()
     assert window.navigation.count() == 7
     assert window.pages.count() == 7
     assert window.pages.widget(2).__class__.__name__ == "ReimbursementPage"

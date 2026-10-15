@@ -22,6 +22,7 @@ from college_finance_manager.infrastructure.database import (
 from college_finance_manager.infrastructure.paths import AppPaths, default_app_paths
 from college_finance_manager.infrastructure.single_instance import AlreadyRunningError, SingleInstanceLock
 from college_finance_manager.ui.main_window import MainWindow, SetupDialog
+from college_finance_manager.ui.theme import APP_STYLE_SHEET
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     paths = AppPaths.from_root(args.data_dir) if args.data_dir else default_app_paths()
     paths.ensure_directories()
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setStyleSheet(APP_STYLE_SHEET)
     instance_lock = SingleInstanceLock(paths.lock_file)
     try:
         instance_lock.acquire()

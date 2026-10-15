@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QCheckBox,
     QDateEdit,
@@ -55,6 +56,7 @@ from college_finance_manager.application.transactions import (
     void_unrealized_transaction,
 )
 from college_finance_manager.infrastructure.paths import AppPaths
+from college_finance_manager.ui.theme import APP_STYLE_SHEET
 from college_finance_manager.ui.operations_pages import (
     AdvancePage,
     AttachmentManagerDialog,
@@ -295,10 +297,16 @@ class TransactionPage(QWidget):
         top.addWidget(heading)
         top.addStretch()
         add_button = QPushButton("新增收支")
+        add_button.setObjectName("primaryButton")
         add_button.clicked.connect(self._add)
         top.addWidget(add_button)
         layout.addLayout(top)
 
+        filter_panel = QFrame()
+        filter_panel.setObjectName("filterPanel")
+        filter_panel_layout = QVBoxLayout(filter_panel)
+        filter_panel_layout.setContentsMargins(16, 14, 16, 14)
+        filter_panel_layout.setSpacing(10)
         filters = QHBoxLayout()
         self.direction_filter = QComboBox()
         self.direction_filter.addItem("全部类型", None)
@@ -328,7 +336,7 @@ class TransactionPage(QWidget):
         filters.addWidget(self.date_from)
         filters.addWidget(self.date_to)
         filters.addStretch()
-        layout.addLayout(filters)
+        filter_panel_layout.addLayout(filters)
         advanced_filters = QHBoxLayout()
         advanced_filters.addWidget(self.category_filter)
         advanced_filters.addWidget(self.min_amount)
@@ -336,7 +344,8 @@ class TransactionPage(QWidget):
         advanced_filters.addWidget(self.handler_filter)
         advanced_filters.addWidget(self.keyword_filter, 1)
         advanced_filters.addWidget(search_button)
-        layout.addLayout(advanced_filters)
+        filter_panel_layout.addLayout(advanced_filters)
+        layout.addWidget(filter_panel)
 
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
@@ -355,6 +364,7 @@ class TransactionPage(QWidget):
         reverse_button = QPushButton("冲销所选")
         reverse_button.clicked.connect(self._reverse)
         void_button = QPushButton("作废误录")
+        void_button.setObjectName("dangerButton")
         void_button.clicked.connect(self._void)
         actions.addWidget(correct_date_button)
         actions.addWidget(reverse_button)
@@ -363,6 +373,7 @@ class TransactionPage(QWidget):
         attachment_button.clicked.connect(self._attachments)
         actions.addWidget(attachment_button)
         export_button = QPushButton("导出筛选结果")
+        export_button.setObjectName("primaryButton")
         export_button.clicked.connect(self._export)
         actions.addWidget(export_button)
         layout.addLayout(actions)
@@ -536,11 +547,50 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("实验室账本")
         self.setMinimumSize(1024, 680)
         container = QWidget()
+        container.setObjectName("appRoot")
         root = QHBoxLayout(container)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        self.sidebar = QWidget()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(224)
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 20)
+        sidebar_layout.setSpacing(0)
+
+        brand = QWidget()
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(18, 24, 16, 20)
+        brand_layout.setSpacing(12)
+        brand_mark = QLabel("账")
+        brand_mark.setObjectName("brandMark")
+        brand_mark.setFixedSize(42, 42)
+        brand_copy = QVBoxLayout()
+        brand_copy.setSpacing(2)
+        self.brand_title = QLabel("实验室账本")
+        self.brand_title.setObjectName("brandTitle")
+        self.brand_subtitle = QLabel("本地离线 · 安全记账")
+        self.brand_subtitle.setObjectName("brandSubtitle")
+        brand_copy.addWidget(self.brand_title)
+        brand_copy.addWidget(self.brand_subtitle)
+        brand_layout.addWidget(brand_mark)
+        brand_layout.addLayout(brand_copy, 1)
+        sidebar_layout.addWidget(brand)
+
         self.navigation = QListWidget()
-        self.navigation.setFixedWidth(180)
+        self.navigation.setObjectName("navigation")
+        self.navigation.setFixedWidth(224)
         self.navigation.addItems(self.NAVIGATION)
+        sidebar_layout.addWidget(self.navigation, 1)
+        footer = QLabel("数据仅保存在你选择的位置")
+        footer.setObjectName("sidebarFooter")
+        footer.setContentsMargins(20, 10, 16, 0)
+        footer.setWordWrap(True)
+        sidebar_layout.addWidget(footer)
+
         self.pages = QStackedWidget()
+        self.pages.setObjectName("contentStack")
         self.overview = self._build_overview()
         self.pages.addWidget(self.overview)
         ledger = self._ledger_row()
@@ -570,20 +620,22 @@ class MainWindow(QMainWindow):
                 self.pages.addWidget(self._build_placeholder(title))
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
-        root.addWidget(self.navigation)
+        root.addWidget(self.sidebar)
         root.addWidget(self.pages, 1)
         self.setCentralWidget(container)
-        self.setStyleSheet(
-            """
-            QMainWindow, QWidget { background: #f5f7fa; color: #1f2937; font-size: 14px; }
-            QListWidget { background: #ffffff; border: none; padding: 12px; }
-            QListWidget::item { padding: 12px; border-radius: 8px; margin: 2px; }
-            QListWidget::item:selected { background: #e7f0ff; color: #165dff; }
-            QFrame#card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; }
-            QLabel#heading { font-size: 24px; font-weight: 600; }
-            QLabel#muted { color: #6b7280; }
-            """
-        )
+        self._configure_tables()
+        self.setStyleSheet(APP_STYLE_SHEET)
+
+    def _configure_tables(self) -> None:
+        for table in self.findChildren(QTableWidget):
+            table.setAlternatingRowColors(True)
+            table.setShowGrid(False)
+            table.setSelectionBehavior(QAbstractItemView.SelectRows)
+            table.setSelectionMode(QAbstractItemView.SingleSelection)
+            table.verticalHeader().setVisible(False)
+            table.verticalHeader().setDefaultSectionSize(42)
+            table.horizontalHeader().setMinimumHeight(42)
+            table.horizontalHeader().setHighlightSections(False)
 
     def _ledger_row(self):
         return get_ledger(self.connection)
@@ -591,57 +643,107 @@ class MainWindow(QMainWindow):
     def _build_overview(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(36, 28, 36, 32)
+        layout.setSpacing(18)
+
+        header = QVBoxLayout()
+        header.setSpacing(3)
         heading = QLabel("总览")
         heading.setObjectName("heading")
-        layout.addWidget(heading)
+        subtitle = QLabel(f"{date.today().year} 年 {date.today().month} 月 {date.today().day} 日 · 掌握每一笔资金去向")
+        subtitle.setObjectName("pageSubtitle")
+        header.addWidget(heading)
+        header.addWidget(subtitle)
+        layout.addLayout(header)
+
         ledger = self._ledger_row()
         card = QFrame()
-        card.setObjectName("card")
+        card.setObjectName("balanceCard")
+        card.setMinimumHeight(154)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(20, 18, 20, 18)
+        card_layout.setContentsMargins(24, 20, 24, 20)
+        card_layout.setSpacing(7)
         if ledger:
+            eyebrow = QLabel("当前可用余额")
+            eyebrow.setObjectName("heroEyebrow")
+            card_layout.addWidget(eyebrow)
             self.ledger_name_label = QLabel(ledger["name"])
+            self.ledger_name_label.setObjectName("ledgerName")
             card_layout.addWidget(self.ledger_name_label)
             totals = get_cash_totals(self.connection, ledger["id"])
             self.balance_value = QLabel(f"¥ {format_cents(totals.balance_cents)}")
+            self.balance_value.setObjectName("balanceValue")
             value = self.balance_value
-            value.setStyleSheet("font-size: 30px; font-weight: 600;")
             card_layout.addWidget(value)
             self.balance_caption = QLabel(
                 f"期初日 {ledger['opening_date']} · 收入 ¥ {format_cents(totals.income_cents)} · "
                 f"支出 ¥ {format_cents(totals.expense_cents)}"
             )
             caption = self.balance_caption
+            caption.setObjectName("heroCaption")
             if totals.is_negative:
-                value.setStyleSheet("font-size: 30px; font-weight: 600; color: #c2410c;")
+                value.setStyleSheet("color: #FFD1CC;")
         else:
             card_layout.addWidget(QLabel("尚未创建账本"))
             caption = QLabel("空账本不会显示模拟数据。")
-        caption.setObjectName("muted")
+            caption.setObjectName("heroCaption")
         card_layout.addWidget(caption)
         layout.addWidget(card)
+
         if ledger:
             dashboard = get_dashboard_data(self.connection, ledger["id"], date.today().strftime("%Y-%m"))
-            metrics = QLabel(
-                f"本月收入 ¥ {format_cents(dashboard['month_income_cents'])}    "
-                f"本月支出 ¥ {format_cents(dashboard['month_expense_cents'])}    "
-                f"待付款报销 {dashboard['pending_reimbursements']} 笔    "
-                f"未结清预付款 {dashboard['open_advances']} 笔"
+            metric_row = QHBoxLayout()
+            metric_row.setSpacing(12)
+            income_card, self.month_income_value = self._make_metric_card(
+                "本月收入", f"¥ {format_cents(dashboard['month_income_cents'])}", "#087A67"
             )
-            metrics.setStyleSheet("font-size: 16px; padding: 10px 0;")
-            layout.addWidget(metrics)
+            expense_card, self.month_expense_value = self._make_metric_card(
+                "本月支出", f"¥ {format_cents(dashboard['month_expense_cents'])}", "#C76535"
+            )
+            reimbursement_card, self.pending_reimbursement_value = self._make_metric_card(
+                "待付款报销", f"{dashboard['pending_reimbursements']} 笔", "#4668A8"
+            )
+            advance_card, self.open_advance_value = self._make_metric_card(
+                "未结清预付款", f"{dashboard['open_advances']} 笔", "#7A5AA6"
+            )
+            for metric_card in (income_card, expense_card, reimbursement_card, advance_card):
+                metric_row.addWidget(metric_card, 1)
+            layout.addLayout(metric_row)
+
+            recent_header = QHBoxLayout()
             recent_label = QLabel("最近 10 笔流水")
-            recent_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-            layout.addWidget(recent_label)
+            recent_label.setObjectName("sectionTitle")
+            recent_hint = QLabel("按发生日期倒序展示")
+            recent_hint.setObjectName("muted")
+            recent_header.addWidget(recent_label)
+            recent_header.addStretch()
+            recent_header.addWidget(recent_hint)
+            layout.addLayout(recent_header)
             self.recent_table = QTableWidget(0, 5)
             self.recent_table.setHorizontalHeaderLabels(("日期", "编号", "类型", "金额", "用途/来源"))
             self.recent_table.setEditTriggers(QTableWidget.NoEditTriggers)
             self.recent_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+            self.recent_table.setMinimumHeight(260)
             self._fill_recent(dashboard["recent"])
-            layout.addWidget(self.recent_table)
-        layout.addStretch()
+            layout.addWidget(self.recent_table, 1)
         return page
+
+    @staticmethod
+    def _make_metric_card(title: str, value: str, accent: str) -> tuple[QFrame, QLabel]:
+        card = QFrame()
+        card.setObjectName("metricCard")
+        card.setMinimumHeight(92)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 13, 16, 13)
+        card_layout.setSpacing(6)
+        title_label = QLabel(title)
+        title_label.setObjectName("metricLabel")
+        value_label = QLabel(value)
+        value_label.setObjectName("metricValue")
+        value_label.setStyleSheet(f"color: {accent};")
+        card_layout.addWidget(title_label)
+        card_layout.addWidget(value_label)
+        return card, value_label
 
     def _fill_recent(self, rows) -> None:
         if not hasattr(self, "recent_table"):
@@ -662,9 +764,13 @@ class MainWindow(QMainWindow):
             f"期初日 {ledger['opening_date']} · 收入 ¥ {format_cents(totals.income_cents)} · "
             f"支出 ¥ {format_cents(totals.expense_cents)}"
         )
-        color = "#c2410c" if totals.is_negative else "#1f2937"
-        self.balance_value.setStyleSheet(f"font-size: 30px; font-weight: 600; color: {color};")
+        color = "#FFD1CC" if totals.is_negative else "#FFFFFF"
+        self.balance_value.setStyleSheet(f"color: {color};")
         dashboard = get_dashboard_data(self.connection, ledger["id"], date.today().strftime("%Y-%m"))
+        self.month_income_value.setText(f"¥ {format_cents(dashboard['month_income_cents'])}")
+        self.month_expense_value.setText(f"¥ {format_cents(dashboard['month_expense_cents'])}")
+        self.pending_reimbursement_value.setText(f"{dashboard['pending_reimbursements']} 笔")
+        self.open_advance_value.setText(f"{dashboard['open_advances']} 笔")
         self._fill_recent(dashboard["recent"])
 
     def _refresh_ledger_name(self, name: str) -> None:

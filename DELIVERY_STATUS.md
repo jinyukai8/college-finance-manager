@@ -1,11 +1,11 @@
 # 阶段交付状态
 
-日期：2026-10-14
-版本：0.4.3
+日期：2026-10-15
+版本：0.4.4
 
 ## A：基础设施
 
-通过。完成四层项目结构、完整初始迁移、首次账本初始化、基础界面、依赖锁定和测试框架。数据库迁移不插入演示数据。
+通过。完成四层项目结构、完整初始迁移、首次账本初始化、统一视觉主题、品牌侧栏、总览指标卡、依赖锁定和测试框架。数据库迁移不插入演示数据。
 
 ## B：直接收支
 
@@ -21,12 +21,12 @@
 
 ## E：验收与 Windows 构建
 
-通过 20 笔跨 3 个月模拟账本验收和 51 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。0.4.3 打包程序在隔离数据目录启动并验证；安装/卸载保数流程沿用已验证的安装框架。为保护正式账本，构建验收不使用正式数据目录。
+通过 20 笔跨 3 个月模拟账本验收和 52 项全量回归。PyInstaller 目录版生成在 `D:\CollegeFinanceManager\dist\CollegeFinanceManager\`，Inno Setup 安装程序输出到 `D:\CollegeFinanceManager\installer\`。0.4.4 安装器允许分别选择程序与账本数据目录，并兼容识别既有 D 盘正式数据；新版界面已通过离屏构造和隔离演示数据渲染检查。打包程序在隔离数据目录启动验证；构建验收不使用正式数据目录。
 
 ## 测试结果
 
 ```text
-51 passed
+52 passed
 ```
 
 构建和自动化测试仅使用隔离数据目录，不打开、不重建也不覆盖 `D:\CollegeFinanceManager\data\` 中的正式账本。升级时应用会先创建并验证完整迁移前备份。
