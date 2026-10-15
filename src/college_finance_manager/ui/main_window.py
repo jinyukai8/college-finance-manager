@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -57,6 +57,7 @@ from college_finance_manager.application.transactions import (
 )
 from college_finance_manager.infrastructure.paths import AppPaths
 from college_finance_manager.ui.theme import APP_STYLE_SHEET
+from college_finance_manager.ui.app_icon import create_app_icon
 from college_finance_manager.ui.operations_pages import (
     AdvancePage,
     AttachmentManagerDialog,
@@ -545,6 +546,7 @@ class MainWindow(QMainWindow):
         self.connection = connection
         self.paths = paths
         self.setWindowTitle("实验室账本")
+        self.setWindowIcon(create_app_icon())
         self.setMinimumSize(1024, 680)
         container = QWidget()
         container.setObjectName("appRoot")
@@ -582,6 +584,13 @@ class MainWindow(QMainWindow):
         self.navigation.setObjectName("navigation")
         self.navigation.setFixedWidth(224)
         self.navigation.addItems(self.NAVIGATION)
+        # QListWidget's delegate must reserve the same height that QSS paints.
+        # A stylesheet min-height alone can paint outside the allocated row.
+        for index in range(self.navigation.count()):
+            self.navigation.item(index).setSizeHint(QSize(180, 48))
+        self.navigation.setUniformItemSizes(True)
+        self.navigation.setSpacing(4)
+        self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         sidebar_layout.addWidget(self.navigation, 1)
         footer = QLabel("数据仅保存在你选择的位置")
         footer.setObjectName("sidebarFooter")

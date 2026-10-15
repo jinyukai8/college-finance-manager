@@ -43,9 +43,7 @@ QListWidget#navigation {
 }
 
 QListWidget#navigation::item {
-    min-height: 44px;
     padding: 0 16px;
-    margin: 3px 0;
     border-radius: 9px;
 }
 

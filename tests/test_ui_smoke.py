@@ -40,6 +40,19 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     assert window.pages.widget(4).__class__.__name__ == "ReportsPage"
     assert window.pages.widget(5).__class__.__name__ == "SettingsPage"
     assert window.pages.widget(6).__class__.__name__ == "RecycleBinPage"
+    window.show()
+    app.processEvents()
+    assert not window.windowIcon().isNull()
+    for selected in range(window.navigation.count()):
+        window.navigation.setCurrentRow(selected)
+        app.processEvents()
+        assert window.pages.currentIndex() == selected
+        rectangles = [
+            window.navigation.visualItemRect(window.navigation.item(index))
+            for index in range(window.navigation.count())
+        ]
+        assert all(rect.height() >= 48 for rect in rectangles)
+        assert all(left.bottom() < right.top() for left, right in zip(rectangles, rectangles[1:]))
     dialog = TransactionDialog(database, paths, window._ledger_row()["id"])
     assert hasattr(dialog, "item")
     assert hasattr(dialog, "invoice_summary")
