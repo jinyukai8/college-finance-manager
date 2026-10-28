@@ -58,6 +58,8 @@ from college_finance_manager.application.transactions import (
 from college_finance_manager.infrastructure.paths import AppPaths
 from college_finance_manager.ui.theme import APP_STYLE_SHEET
 from college_finance_manager.ui.app_icon import create_app_icon
+from college_finance_manager.ui.file_drop_area import FileDropArea
+from college_finance_manager.ui.note_viewer import set_note_cell
 from college_finance_manager.ui.operations_pages import (
     AdvancePage,
     AttachmentManagerDialog,
@@ -152,14 +154,25 @@ class TransactionDialog(QDialog):
         self.payment_method = QLineEdit()
         self.note = QLineEdit()
         invoice_row = QWidget()
-        invoice_layout = QHBoxLayout(invoice_row)
+        invoice_layout = QVBoxLayout(invoice_row)
         invoice_layout.setContentsMargins(0, 0, 0, 0)
+        self.invoice_drop_area = FileDropArea("将发票/凭证文件拖到这里，保存收支时一并提交")
+        self.invoice_drop_area.files_dropped.connect(self._append_invoices)
+        invoice_layout.addWidget(self.invoice_drop_area)
+        invoice_actions = QHBoxLayout()
         choose_invoice = QPushButton("选择发票…")
         choose_invoice.clicked.connect(self._choose_invoices)
+        self.clear_invoices_button = QPushButton("清空选择")
+        self.clear_invoices_button.setEnabled(False)
+        self.clear_invoices_button.clicked.connect(self._clear_invoices)
+        invoice_actions.addWidget(choose_invoice)
+        invoice_actions.addWidget(self.clear_invoices_button)
+        invoice_actions.addStretch()
+        invoice_layout.addLayout(invoice_actions)
         self.invoice_summary = QLabel("未选择")
         self.invoice_summary.setWordWrap(True)
-        invoice_layout.addWidget(choose_invoice)
-        invoice_layout.addWidget(self.invoice_summary, 1)
+        self.invoice_summary.setMaximumHeight(64)
+        invoice_layout.addWidget(self.invoice_summary)
         layout.addRow("类型 *", self.direction)
         layout.addRow("发生日期 *", self.occurred_on)
         layout.addRow("金额（元）*", self.amount)
@@ -188,9 +201,26 @@ class TransactionDialog(QDialog):
         )
         if not filenames:
             return
-        self.invoice_paths = [Path(filename) for filename in filenames]
-        names = "、".join(path.name for path in self.invoice_paths)
-        self.invoice_summary.setText(f"已选择 {len(self.invoice_paths)} 个：{names}")
+        self._append_invoices([Path(filename) for filename in filenames])
+
+    def _append_invoices(self, paths: list[Path]) -> None:
+        for path in paths:
+            resolved = path.resolve()
+            if resolved not in self.invoice_paths:
+                self.invoice_paths.append(resolved)
+        self._refresh_invoice_summary()
+
+    def _clear_invoices(self) -> None:
+        self.invoice_paths.clear()
+        self._refresh_invoice_summary()
+
+    def _refresh_invoice_summary(self) -> None:
+        names = "、".join(path.name for path in self.invoice_paths[:3])
+        if len(self.invoice_paths) > 3:
+            names += "…"
+        self.invoice_summary.setText(f"待提交 {len(self.invoice_paths)} 个：{names}" if self.invoice_paths else "未选择")
+        self.invoice_summary.setToolTip("\n".join(str(path) for path in self.invoice_paths))
+        self.clear_invoices_button.setEnabled(bool(self.invoice_paths))
 
     def _load_categories(self) -> None:
         selected = self.category.currentData()
@@ -348,9 +378,9 @@ class TransactionPage(QWidget):
         filter_panel_layout.addLayout(advanced_filters)
         layout.addWidget(filter_panel)
 
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态")
+            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态", "备注")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -426,6 +456,7 @@ class TransactionPage(QWidget):
                 if column == 0:
                     item.setData(Qt.UserRole, row["id"])
                 self.table.setItem(index, column, item)
+            set_note_cell(self.table, index, 9, row["note"])
 
     def _selected_id(self) -> str | None:
         row = self.table.currentRow()

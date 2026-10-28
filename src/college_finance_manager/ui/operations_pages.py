@@ -68,6 +68,8 @@ from college_finance_manager.application.transactions import (
 )
 from college_finance_manager.domain.money import format_cents, parse_yuan_to_cents
 from college_finance_manager.infrastructure.paths import AppPaths
+from college_finance_manager.ui.file_drop_area import FileDropArea
+from college_finance_manager.ui.note_viewer import set_note_cell
 
 
 def _heading(text: str) -> QLabel:
@@ -137,6 +139,9 @@ class AttachmentManagerDialog(QDialog):
         self.setWindowTitle("凭证管理")
         self.resize(700, 420)
         layout = QVBoxLayout(self)
+        self.drop_area = FileDropArea("将发票/凭证文件拖到这里即可导入")
+        self.drop_area.files_dropped.connect(self._import_files)
+        layout.addWidget(self.drop_area)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(("文件名", "类型", "大小", "导入时间"))
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -172,18 +177,23 @@ class AttachmentManagerDialog(QDialog):
         return _selected_id(self.table)
 
     def _add(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(self, "选择凭证", "", "凭证 (*.jpg *.jpeg *.png *.pdf)")
-        if not filename:
-            return
-        try:
-            add_attachment(
-                self.connection, paths=self.paths, ledger_id=self.ledger_id,
-                entity_type=self.entity_type, entity_id=self.entity_id, source_path=Path(filename),
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
-            return
+        filenames, _ = QFileDialog.getOpenFileNames(self, "选择凭证", "", "凭证 (*.jpg *.jpeg *.png *.pdf)")
+        if filenames:
+            self._import_files([Path(filename) for filename in filenames])
+
+    def _import_files(self, paths: list[Path]) -> None:
+        failed = []
+        for path in dict.fromkeys(path.resolve() for path in paths):
+            try:
+                add_attachment(
+                    self.connection, paths=self.paths, ledger_id=self.ledger_id,
+                    entity_type=self.entity_type, entity_id=self.entity_id, source_path=path,
+                )
+            except Exception as exc:
+                failed.append(f"{path.name}：{exc}")
         self.reload()
+        if failed:
+            QMessageBox.warning(self, "部分凭证未导入", "\n".join(failed))
 
     def _open(self) -> None:
         attachment_id = self._attachment_id()
@@ -229,8 +239,8 @@ class ReimbursementPage(QWidget):
         add.clicked.connect(self._add)
         top.addWidget(add)
         layout.addLayout(top)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(("申请人", "申请日期", "金额", "用途", "状态", "关联流水"))
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(("申请人", "申请日期", "金额", "用途", "状态", "关联流水", "备注"))
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
@@ -256,6 +266,7 @@ class ReimbursementPage(QWidget):
                     item.setData(Qt.UserRole, row["id"])
                     item.setData(Qt.UserRole + 1, row["status"])
                 self.table.setItem(i, j, item)
+            set_note_cell(self.table, i, 6, row["note"])
 
     def _id(self):
         return _selected_id(self.table)
@@ -330,8 +341,8 @@ class AdvancePage(QWidget):
         add.clicked.connect(self._add)
         top.addWidget(add)
         layout.addLayout(top)
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(("收款人", "申请日期", "预付金额", "已核销", "已退款", "待结清", "状态"))
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(("收款人", "申请日期", "预付金额", "已核销", "已退款", "待结清", "状态", "备注"))
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -357,6 +368,7 @@ class AdvancePage(QWidget):
                 if j == 0:
                     item.setData(Qt.UserRole, row["id"])
                 self.table.setItem(i, j, item)
+            set_note_cell(self.table, i, 7, row["note"])
 
     def _id(self):
         return _selected_id(self.table)

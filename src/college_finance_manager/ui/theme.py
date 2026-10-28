@@ -162,7 +162,7 @@ QPushButton#dangerButton:hover {
     border-color: #E99B93;
 }
 
-QLineEdit, QComboBox, QDateEdit {
+QLineEdit, QComboBox, QDateEdit, QPlainTextEdit {
     min-height: 34px;
     padding: 0 10px;
     color: #17324D;
@@ -172,7 +172,7 @@ QLineEdit, QComboBox, QDateEdit {
     selection-background-color: #BFE9DF;
 }
 
-QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QPlainTextEdit:focus {
     border: 2px solid #159A85;
 }
 
@@ -233,5 +233,28 @@ QToolTip {
     background: #17324D;
     border: none;
     padding: 6px;
+}
+
+QFrame#fileDropArea {
+    background: #F0FAF7;
+    border: 2px dashed #A6CFC4;
+    border-radius: 10px;
+}
+
+QFrame#fileDropArea[dragActive="true"] {
+    background: #DDF3ED;
+    border-color: #0C7C6C;
+}
+
+QPushButton#noteButton {
+    min-height: 28px;
+    padding: 0 10px;
+    color: #087A67;
+    border: none;
+    background: transparent;
+}
+
+QPushButton#noteButton:hover {
+    background: #DDF3ED;
 }
 """
