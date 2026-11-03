@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGraphicsDropShadowEffect,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -23,8 +24,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -53,11 +56,14 @@ from college_finance_manager.application.transactions import (
     create_direct_transaction,
     get_cash_totals,
     list_transactions,
+    transaction_summary,
     reverse_transaction,
     void_unrealized_transaction,
 )
 from college_finance_manager.infrastructure.paths import AppPaths
 from college_finance_manager.ui.theme import APP_STYLE_SHEET
+from college_finance_manager.ui.ledger_style import BadgeDelegate, campus_banner, ledger_icon
+from PySide6.QtGui import QColor
 from college_finance_manager.ui.app_icon import create_app_icon
 from college_finance_manager.ui.file_drop_area import FileDropArea
 from college_finance_manager.ui.note_viewer import set_note_cell
@@ -316,29 +322,71 @@ class CorrectTransactionDateDialog(QDialog):
 
 class TransactionPage(QWidget):
     changed = Signal()
-    INLINE_FIELDS = {1: "occurred_on", 3: "amount_cents", 5: "item", 6: "purpose", 10: "handler", 11: "payment_method"}
+    INLINE_FIELDS = {1: "occurred_on", 3: "amount_cents", 5: "item", 6: "purpose", 10: "handler"}
     FORM_FIELDS = {2: "direction", 4: "category_id", 9: "note"}
+    ACTIONS_COLUMN = 11
+    SELECT_COLUMN = 12
 
     def __init__(self, connection: sqlite3.Connection, paths: AppPaths, ledger_id: str, parent=None) -> None:
         super().__init__(parent)
         self.connection = connection
         self.paths = paths
         self.ledger_id = ledger_id
+        self._filters = TransactionFilter()
+        self._page = 0
+        self._count = 0
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        top = QHBoxLayout()
+        layout.setContentsMargins(20, 12, 20, 16)
+        layout.setSpacing(12)
+        banner = QFrame()
+        banner.setObjectName("ledgerBanner")
+        top = QHBoxLayout(banner)
+        top.setContentsMargins(12, 2, 16, 2)
+        marker = QFrame()
+        marker.setObjectName("headingMarker")
+        marker.setFixedSize(5, 25)
+        top.addWidget(marker)
         heading = QLabel("收支流水")
         heading.setObjectName("heading")
         top.addWidget(heading)
         top.addStretch()
-        add_button = QPushButton("新增收支")
-        add_button.setObjectName("primaryButton")
-        add_button.clicked.connect(self._add)
-        top.addWidget(add_button)
-        layout.addLayout(top)
+        artwork = QLabel()
+        artwork.setPixmap(campus_banner())
+        top.addWidget(artwork)
+        layout.addWidget(banner)
+        metrics = QHBoxLayout()
+        metrics.setSpacing(10)
+        self.summary_values = []
+        for title, icon, color, tone in (
+            ("本期收入", "cash", "#08775D", "mint"), ("本期支出", "cash", "#C34A24", "peach"),
+            ("结余", "layers", "#245CB5", "blue"), ("记录总数", "file", "#6940B9", "violet"),
+        ):
+            card = QFrame()
+            card.setObjectName(tone + "Summary")
+            card_layout = QHBoxLayout(card)
+            card_layout.setContentsMargins(10, 9, 10, 9)
+            card_layout.setSpacing(8)
+            symbol = QLabel()
+            symbol.setPixmap(ledger_icon(icon, color).pixmap(25, 25))
+            card_layout.addWidget(symbol)
+            copy = QVBoxLayout()
+            copy.setSpacing(2)
+            label = QLabel(title)
+            label.setObjectName("ledgerMetricLabel")
+            value = QLabel()
+            value.setObjectName("ledgerMetricValue")
+            value.setMinimumWidth(0)
+            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            copy.addWidget(label)
+            copy.addWidget(value)
+            card_layout.addLayout(copy, 1)
+            metrics.addWidget(card, 1)
+            self.summary_values.append(value)
+        layout.addLayout(metrics)
 
         filter_panel = QFrame()
         filter_panel.setObjectName("filterPanel")
+        self._card_shadow(filter_panel)
         filter_panel_layout = QVBoxLayout(filter_panel)
         filter_panel_layout.setContentsMargins(16, 14, 16, 14)
         filter_panel_layout.setSpacing(10)
@@ -363,62 +411,141 @@ class TransactionPage(QWidget):
         self.handler_filter = QLineEdit()
         self.handler_filter.setPlaceholderText("经办人")
         self.keyword_filter = QLineEdit()
-        self.keyword_filter.setPlaceholderText("搜索用途或备注")
+        self.keyword_filter.setPlaceholderText("搜索物品、用途或备注")
+        for editor in (self.min_amount, self.max_amount, self.handler_filter, self.keyword_filter):
+            editor.setMinimumWidth(0)
+            editor.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            editor.returnPressed.connect(self._apply_filters)
+        for date_edit in (self.date_from, self.date_to):
+            date_edit.setDisplayFormat("yyyy/MM/dd")
         search_button = QPushButton("筛选")
-        search_button.clicked.connect(self.reload)
+        search_button.setObjectName("primaryButton")
+        search_button.setIcon(ledger_icon("filter", "#FFFFFF"))
+        search_button.clicked.connect(self._apply_filters)
+        reset_button = QPushButton("重置")
+        reset_button.setIcon(ledger_icon("history"))
+        reset_button.clicked.connect(self._reset_filters)
+        filters.addWidget(QLabel("类型"))
         filters.addWidget(self.direction_filter)
         filters.addWidget(self.use_dates)
         filters.addWidget(self.date_from)
         filters.addWidget(self.date_to)
         filters.addStretch()
+        filters.addWidget(reset_button)
+        filters.addWidget(search_button)
         filter_panel_layout.addLayout(filters)
         advanced_filters = QHBoxLayout()
+        advanced_filters.addWidget(QLabel("类别"))
         advanced_filters.addWidget(self.category_filter)
-        advanced_filters.addWidget(self.min_amount)
-        advanced_filters.addWidget(self.max_amount)
-        advanced_filters.addWidget(self.handler_filter)
-        advanced_filters.addWidget(self.keyword_filter, 1)
-        advanced_filters.addWidget(search_button)
+        advanced_filters.addWidget(QLabel("金额"))
+        advanced_filters.addWidget(self.min_amount, 1)
+        advanced_filters.addWidget(self.max_amount, 1)
+        advanced_filters.addWidget(self.handler_filter, 1)
+        advanced_filters.addWidget(self.keyword_filter, 3)
         filter_panel_layout.addLayout(advanced_filters)
         layout.addWidget(filter_panel)
 
-        self.table = QTableWidget(0, 12)
+        table_card = QFrame()
+        table_card.setObjectName("ledgerTableCard")
+        self._card_shadow(table_card)
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(0)
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        actions.setContentsMargins(10, 9, 10, 9)
+        add_button = QPushButton("新增收支")
+        add_button.setIcon(ledger_icon("plus", "#FFFFFF"))
+        add_button.setObjectName("primaryButton")
+        add_button.clicked.connect(self._add)
+        actions.addWidget(add_button)
+        export_button = QPushButton("导出筛选结果")
+        export_button.setIcon(ledger_icon("download"))
+        export_button.clicked.connect(self._export)
+        actions.addWidget(export_button)
+        batch_button = QPushButton("批量操作")
+        batch_button.setIcon(ledger_icon("layers"))
+        batch_menu = QMenu(batch_button)
+        batch_menu.addAction("勾选本页全部", lambda: self._check_page(True))
+        batch_menu.addAction("清空本页勾选", lambda: self._check_page(False))
+        batch_menu.addAction("导出勾选的支出", self._export_selected)
+        batch_button.setMenu(batch_menu)
+        actions.addWidget(batch_button)
+        more_button = QPushButton("流水操作")
+        more_menu = QMenu(more_button)
+        for label, handler in (
+            ("详情", self._details), ("编辑", self._edit_selected), ("更正日期", self._correct_date),
+            ("冲销所选", self._reverse), ("作废误录", self._void), ("查看发票/凭证", self._attachments),
+        ):
+            more_menu.addAction(label, handler)
+        more_button.setMenu(more_menu)
+        actions.addWidget(more_button)
+        actions.addStretch()
+        table_layout.addLayout(actions)
+
+        self.table = QTableWidget(0, 13)
+        self.table.setObjectName("ledgerTable")
         self.table.setHorizontalHeaderLabels(
-            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态", "备注", "经办人", "支付方式")
+            ("编号", "日期", "类型", "金额（¥）", "类别", "物品", "用途/来源", "发票", "状态", "备注", "经办人", "操作", "")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         self.table.itemChanged.connect(self._inline_changed)
         self.table.cellDoubleClicked.connect(self._double_click_cell)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
-        layout.addWidget(self.table, 1)
-
-        actions = QHBoxLayout()
-        actions.addStretch()
-        for label, handler in (("详情", self._details), ("编辑", self._edit_selected)):
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            actions.addWidget(button)
-        correct_date_button = QPushButton("更正日期")
-        correct_date_button.clicked.connect(self._correct_date)
-        reverse_button = QPushButton("冲销所选")
-        reverse_button.clicked.connect(self._reverse)
-        void_button = QPushButton("作废误录")
-        void_button.setObjectName("dangerButton")
-        void_button.clicked.connect(self._void)
-        actions.addWidget(correct_date_button)
-        actions.addWidget(reverse_button)
-        actions.addWidget(void_button)
-        attachment_button = QPushButton("查看发票/凭证")
-        attachment_button.clicked.connect(self._attachments)
-        actions.addWidget(attachment_button)
-        export_button = QPushButton("导出筛选结果")
-        export_button.setObjectName("primaryButton")
-        export_button.clicked.connect(self._export)
-        actions.addWidget(export_button)
-        layout.addLayout(actions)
+        self.table.setMouseTracking(True)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.setWordWrap(False)
+        header = self.table.horizontalHeader()
+        header.setMinimumSectionSize(22)
+        header.setSectionResizeMode(QHeaderView.Fixed)
+        for column, width in enumerate((96, 84, 41, 72, 62, 48, 92, 66, 43, 44, 51, 66, 24)):
+            self.table.setColumnWidth(column, width)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.moveSection(header.visualIndex(self.SELECT_COLUMN), 0)
+        for column in (2, 7, 8):
+            self.table.setItemDelegateForColumn(column, BadgeDelegate(self.table))
+        table_layout.addWidget(self.table, 1)
+        footer = QHBoxLayout()
+        footer.setSpacing(7)
+        footer.setContentsMargins(12, 8, 12, 8)
+        self.result_count = QLabel()
+        self.result_count.setObjectName("muted")
+        footer.addWidget(self.result_count)
+        footer.addStretch()
+        self.page_size = QComboBox()
+        for size in (10, 20, 50):
+            self.page_size.addItem(f"{size} 条/页", size)
+        self.page_size.currentIndexChanged.connect(lambda: self._go_page(0))
+        footer.addWidget(self.page_size)
+        self.previous_page = QPushButton()
+        self.previous_page.setIcon(ledger_icon("left"))
+        self.previous_page.setToolTip("上一页")
+        self.previous_page.clicked.connect(lambda: self._go_page(self._page - 1))
+        footer.addWidget(self.previous_page)
+        self.page_label = QLabel()
+        footer.addWidget(self.page_label)
+        self.next_page = QPushButton()
+        self.next_page.setIcon(ledger_icon("right"))
+        self.next_page.setToolTip("下一页")
+        self.next_page.clicked.connect(lambda: self._go_page(self._page + 1))
+        footer.addWidget(self.next_page)
+        table_layout.addLayout(footer)
+        layout.addWidget(table_card, 1)
         self.reload()
+
+    @staticmethod
+    def _card_shadow(card):
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(26, 63, 49, 19))
+        card.setGraphicsEffect(shadow)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "table"):
+            width = event.size().width()
+            self.table.setColumnWidth(6, 160 if width >= 1080 else 122 if width >= 960 else 92)
 
     def reload_categories(self) -> None:
         selected = self.category_filter.currentData()
@@ -429,17 +556,14 @@ class TransactionPage(QWidget):
         index = self.category_filter.findData(selected)
         self.category_filter.setCurrentIndex(index if index >= 0 else 0)
 
-    def reload(self) -> None:
-        try:
-            minimum = parse_yuan_to_cents(self.min_amount.text(), allow_zero=True) if self.min_amount.text().strip() else None
-            maximum = parse_yuan_to_cents(self.max_amount.text(), allow_zero=True) if self.max_amount.text().strip() else None
-        except Exception as exc:
-            QMessageBox.warning(self, "筛选金额无效", str(exc))
-            return
-        rows = list_transactions(
-            self.connection,
-            self.ledger_id,
-            TransactionFilter(
+    def _read_filters(self):
+        minimum = parse_yuan_to_cents(self.min_amount.text(), allow_zero=True) if self.min_amount.text().strip() else None
+        maximum = parse_yuan_to_cents(self.max_amount.text(), allow_zero=True) if self.max_amount.text().strip() else None
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("最低金额不能超过最高金额")
+        if self.use_dates.isChecked() and self.date_from.date() > self.date_to.date():
+            raise ValueError("开始日期不能晚于结束日期")
+        return TransactionFilter(
                 date_from=self.date_from.date().toPython() if self.use_dates.isChecked() else None,
                 date_to=self.date_to.date().toPython() if self.use_dates.isChecked() else None,
                 direction=self.direction_filter.currentData(),
@@ -448,9 +572,48 @@ class TransactionPage(QWidget):
                 amount_max_cents=maximum,
                 handler=self.handler_filter.text(),
                 keyword=self.keyword_filter.text(),
-            ),
         )
+
+    def _apply_filters(self):
+        try:
+            self._filters = self._read_filters()
+        except ValueError as exc:
+            QMessageBox.warning(self, "筛选条件无效", str(exc))
+            return
+        self._go_page(0)
+
+    def _reset_filters(self):
+        self.direction_filter.setCurrentIndex(0)
+        self.category_filter.setCurrentIndex(0)
+        self.use_dates.setChecked(False)
+        self.date_from.setDate(QDate(QDate.currentDate().year(), 1, 1))
+        self.date_to.setDate(QDate.currentDate())
+        for editor in (self.min_amount, self.max_amount, self.handler_filter, self.keyword_filter):
+            editor.clear()
+        self._apply_filters()
+
+    def _go_page(self, index):
+        self._page = index
+        self.reload()
+
+    def reload(self) -> None:
+        income, expense, net, self._count = transaction_summary(self.connection, self.ledger_id, self._filters)
+        for label, amount in zip(self.summary_values[:3], (income, expense, net)):
+            whole, fractional = format_cents(amount).split(".")
+            value = f"¥ {'-' if whole.startswith('-') else ''}{abs(int(whole)):,}.{fractional}"
+            label.setText(value)
+            label.setToolTip(value)
+        self.summary_values[3].setText(f"{self._count:,} 条")
+        size = self.page_size.currentData()
+        pages = max(1, (self._count + size - 1) // size)
+        self._page = min(max(0, self._page), pages - 1)
+        self.page_label.setText(f"{self._page + 1} / {pages}")
+        self.previous_page.setEnabled(self._page > 0)
+        self.next_page.setEnabled(self._page + 1 < pages)
+        rows = list_transactions(self.connection, self.ledger_id, self._filters, limit=size, offset=self._page * size)
+        self._page_rows = rows
         blocker = QSignalBlocker(self.table)
+        self.table.setRowCount(0)
         self.table.setRowCount(len(rows))
         direction_names = {"income": "收入", "expense": "支出"}
         status_names = {"active": "有效", "voided": "已作废", "reversed": "已冲销"}
@@ -461,11 +624,15 @@ class TransactionPage(QWidget):
                 row["item"] or "—", row["purpose"],
                 f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
                 status_names[row["status"]],
-                "", row["handler"] or "—", row["payment_method"] or "—",
+                "", row["handler"] or "—",
             )
             editable = row["source"] in {"direct", "correction"} and row["status"] == "active"
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
+                if column in (0, 1, 4, 5, 6, 7, 10):
+                    item.setToolTip(str(value))
+                if column == 3:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if not editable or column not in self.INLINE_FIELDS:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 else:
@@ -475,7 +642,47 @@ class TransactionPage(QWidget):
                 self.table.setItem(index, column, item)
             set_note_cell(self.table, index, 9, row["note"],
                           (lambda tx=row["id"]: self._edit(tx, "note")) if editable else None)
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            check.setCheckState(Qt.Unchecked)
+            self.table.setItem(index, self.SELECT_COLUMN, check)
+            tools = QWidget()
+            tool_layout = QHBoxLayout(tools)
+            tool_layout.setContentsMargins(1, 0, 1, 0)
+            tool_layout.setSpacing(0)
+            for icon, label, action in (
+                ("edit", "编辑", self._edit_selected), ("file", "发票/凭证", self._attachments),
+                ("trash", "作废误录（保留原记录）", self._void),
+            ):
+                button = QPushButton()
+                button.setObjectName("rowAction")
+                button.setFixedWidth(22)
+                button.setIconSize(QSize(15, 15))
+                button.setIcon(ledger_icon(icon, "#B23A35" if icon == "trash" else "#08775D"))
+                button.setToolTip(label)
+                button.setAccessibleName(label)
+                button.clicked.connect(lambda _, row=index, action=action: self._row_action(row, action))
+                tool_layout.addWidget(button)
+            self.table.setCellWidget(index, self.ACTIONS_COLUMN, tools)
         del blocker
+        self._selection_count()
+
+    def _row_action(self, row, action):
+        self.table.setCurrentCell(row, 0)
+        action()
+
+    def _selection_count(self):
+        self.result_count.setText(f"共 {self._count:,} 条记录，已勾选 {len(self._checked_rows())} 条")
+
+    def _checked_rows(self):
+        return [row for index, row in enumerate(self._page_rows)
+                if self.table.item(index, self.SELECT_COLUMN).checkState() == Qt.Checked]
+
+    def _check_page(self, checked):
+        with QSignalBlocker(self.table):
+            for index in range(self.table.rowCount()):
+                self.table.item(index, self.SELECT_COLUMN).setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        self._selection_count()
 
     def _details(self) -> None:
         if transaction_id := self._selected_id():
@@ -501,6 +708,9 @@ class TransactionPage(QWidget):
             self._save_edit(transaction_id, dialog.changes, dialog.reason.text())
 
     def _inline_changed(self, item) -> None:
+        if item.column() == self.SELECT_COLUMN:
+            self._selection_count()
+            return
         field = self.INLINE_FIELDS.get(item.column())
         if field is None or not (item.flags() & Qt.ItemIsEditable) or item.text() == item.data(Qt.UserRole):
             return
@@ -618,19 +828,22 @@ class TransactionPage(QWidget):
             self.reload()
 
     def _export(self) -> None:
+        self._export_rows()
+
+    def _export_selected(self):
+        rows = [row for row in self._checked_rows() if row["direction"] == "expense"]
+        if not rows:
+            QMessageBox.information(self, "没有勾选支出", "请在本页勾选要导出的支出。")
+            return
+        self._export_rows(rows)
+
+    def _export_rows(self, rows=None):
         filename, _ = QFileDialog.getSaveFileName(self, "导出实验室账本", "实验室账本.xlsx", "Excel (*.xlsx)")
         if not filename:
             return
-        filters = TransactionFilter(
-            date_from=self.date_from.date().toPython() if self.use_dates.isChecked() else None,
-            date_to=self.date_to.date().toPython() if self.use_dates.isChecked() else None,
-            direction=self.direction_filter.currentData(), category_id=self.category_filter.currentData(),
-            amount_min_cents=parse_yuan_to_cents(self.min_amount.text(), allow_zero=True) if self.min_amount.text().strip() else None,
-            amount_max_cents=parse_yuan_to_cents(self.max_amount.text(), allow_zero=True) if self.max_amount.text().strip() else None,
-            handler=self.handler_filter.text(), keyword=self.keyword_filter.text(),
-        )
         try:
-            rows = list_transactions(self.connection, self.ledger_id, filters, limit=100000)
+            if rows is None:
+                rows = list_transactions(self.connection, self.ledger_id, self._filters, limit=-1)
             ledger = get_ledger(self.connection)
             export_filtered_transactions(
                 rows,
@@ -644,7 +857,9 @@ class TransactionPage(QWidget):
 
 
 class MainWindow(QMainWindow):
-    NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置", "回收站", "冲销记录")
+    NAVIGATION = ("总览", "收支流水", "冲销记录", "回收站", "设置")
+    NAVIGATION_PAGES = (0, 1, 7, 6, 5)
+    NAVIGATION_ICONS = ("home", "cash", "history", "trash", "settings")
 
     def __init__(
         self,
@@ -666,33 +881,40 @@ class MainWindow(QMainWindow):
 
         self.sidebar = QWidget()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(224)
+        self.sidebar.setFixedWidth(184)
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 20)
         sidebar_layout.setSpacing(0)
 
         brand = QWidget()
         brand_layout = QHBoxLayout(brand)
-        brand_layout.setContentsMargins(18, 24, 16, 20)
-        brand_layout.setSpacing(12)
-        brand_mark = QLabel("账")
+        brand_layout.setContentsMargins(15, 22, 10, 19)
+        brand_layout.setSpacing(8)
+        brand_mark = QLabel()
         brand_mark.setObjectName("brandMark")
-        brand_mark.setFixedSize(42, 42)
+        brand_mark.setFixedSize(38, 40)
+        brand_mark.setAlignment(Qt.AlignCenter)
+        brand_mark.setPixmap(ledger_icon("flask", "#FFFFFF").pixmap(25, 25))
         brand_copy = QVBoxLayout()
         brand_copy.setSpacing(2)
         self.brand_title = QLabel("实验室账本")
         self.brand_title.setObjectName("brandTitle")
-        self.brand_subtitle = QLabel("本地离线 · 安全记账")
+        self.brand_subtitle = QLabel("资金管理助手")
         self.brand_subtitle.setObjectName("brandSubtitle")
         brand_copy.addWidget(self.brand_title)
         brand_copy.addWidget(self.brand_subtitle)
         brand_layout.addWidget(brand_mark)
         brand_layout.addLayout(brand_copy, 1)
         sidebar_layout.addWidget(brand)
+        separator = QFrame()
+        separator.setObjectName("sidebarSeparator")
+        separator.setFixedHeight(1)
+        sidebar_layout.addWidget(separator)
 
         self.navigation = QListWidget()
         self.navigation.setObjectName("navigation")
-        self.navigation.setFixedWidth(224)
+        self.navigation.setFixedWidth(183)
+        self.navigation.setIconSize(QSize(19, 19))
         self.navigation.addItems(self.NAVIGATION)
         # QListWidget's delegate must reserve the same height that QSS paints.
         # A stylesheet min-height alone can paint outside the allocated row.
@@ -738,15 +960,22 @@ class MainWindow(QMainWindow):
             self.transaction_page.changed.connect(reversal_page.reload)
             self.pages.addWidget(reversal_page)
         else:
-            for title in self.NAVIGATION[2:]:
+            for title in ("报销", "预付款", "报表", "设置", "回收站", "冲销记录"):
                 self.pages.addWidget(self._build_placeholder(title))
-        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.currentRowChanged.connect(self._navigate)
         self.navigation.setCurrentRow(0)
         root.addWidget(self.sidebar)
         root.addWidget(self.pages, 1)
         self.setCentralWidget(container)
         self._configure_tables()
         self.setStyleSheet(APP_STYLE_SHEET)
+
+    def _navigate(self, index):
+        if index < 0:
+            return
+        self.pages.setCurrentIndex(self.NAVIGATION_PAGES[index])
+        for row, icon in enumerate(self.NAVIGATION_ICONS):
+            self.navigation.item(row).setIcon(ledger_icon(icon, "#FFFFFF" if row == index else "#213833"))
 
     def _configure_tables(self) -> None:
         for table in self.findChildren(QTableWidget):
@@ -755,8 +984,9 @@ class MainWindow(QMainWindow):
             table.setSelectionBehavior(QAbstractItemView.SelectRows)
             table.setSelectionMode(QAbstractItemView.SingleSelection)
             table.verticalHeader().setVisible(False)
-            table.verticalHeader().setDefaultSectionSize(42)
-            table.horizontalHeader().setMinimumHeight(42)
+            is_ledger = table.objectName() == "ledgerTable"
+            table.verticalHeader().setDefaultSectionSize(35 if is_ledger else 42)
+            table.horizontalHeader().setMinimumHeight(35 if is_ledger else 42)
             table.horizontalHeader().setHighlightSections(False)
 
     def _ledger_row(self):

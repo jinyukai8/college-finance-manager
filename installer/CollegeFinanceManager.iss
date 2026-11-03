@@ -1,5 +1,5 @@
 #define MyAppName "实验室账本"
-#define MyAppVersion "0.4.7"
+#define MyAppVersion "0.4.8"
 #define MyAppPublisher "jinyukai8"
 #define MyAppExeName "CollegeFinanceManager.exe"
 

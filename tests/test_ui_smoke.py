@@ -25,15 +25,17 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     window = MainWindow(database, paths, lambda _path: None)
     assert window.windowTitle() == "实验室账本"
     assert window.minimumWidth() == 1024
-    assert window.navigation.width() == 224
+    assert window.navigation.width() == 183
     assert window.brand_title.text() == "实验室账本"
-    assert window.brand_subtitle.text() == "本地离线 · 安全记账"
+    assert window.brand_subtitle.text() == "资金管理助手"
     assert window.balance_value.objectName() == "balanceValue"
     assert window.month_income_value.objectName() == "metricValue"
     assert window.month_expense_value.objectName() == "metricValue"
     assert "QPushButton#primaryButton" in window.styleSheet()
     assert "QTableWidget" in window.styleSheet()
-    assert window.navigation.count() == 8
+    assert [window.navigation.item(i).text() for i in range(window.navigation.count())] == [
+        "总览", "收支流水", "冲销记录", "回收站", "设置",
+    ]
     assert window.pages.count() == 8
     assert window.pages.widget(2).__class__.__name__ == "ReimbursementPage"
     assert window.pages.widget(3).__class__.__name__ == "AdvancePage"
@@ -46,7 +48,7 @@ def test_main_window_can_be_constructed_offscreen(database, tmp_path):
     for selected in range(window.navigation.count()):
         window.navigation.setCurrentRow(selected)
         app.processEvents()
-        assert window.pages.currentIndex() == selected
+        assert window.pages.currentIndex() == window.NAVIGATION_PAGES[selected]
         rectangles = [
             window.navigation.visualItemRect(window.navigation.item(index))
             for index in range(window.navigation.count())

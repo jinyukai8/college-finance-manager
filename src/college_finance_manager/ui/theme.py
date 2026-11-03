@@ -3,19 +3,19 @@ from __future__ import annotations
 
 APP_STYLE_SHEET = """
 QMainWindow, QWidget#appRoot, QStackedWidget#contentStack, QDialog {
-    background: #F4F7FB;
-    color: #19324A;
+    background: #F6F8F7;
+    color: #142822;
     font-family: "Microsoft YaHei UI", "Microsoft YaHei";
     font-size: 14px;
 }
 
 QWidget#sidebar {
-    background: #123247;
-    border: none;
+    background: #FDFEFD;
+    border-right: 1px solid #DDE7E2;
 }
 
 QLabel#brandMark {
-    background: #25A18E;
+    background: #08775D;
     color: white;
     border-radius: 10px;
     font-size: 20px;
@@ -24,22 +24,22 @@ QLabel#brandMark {
 }
 
 QLabel#brandTitle {
-    color: #FFFFFF;
-    font-size: 19px;
+    color: #172D27;
+    font-size: 17px;
     font-weight: 700;
 }
 
 QLabel#brandSubtitle, QLabel#sidebarFooter {
-    color: #AFC4D2;
+    color: #65756F;
     font-size: 12px;
 }
 
 QListWidget#navigation {
     background: transparent;
-    color: #DCE8EF;
+    color: #263C35;
     border: none;
     outline: none;
-    padding: 8px 12px;
+    padding: 12px 11px;
 }
 
 QListWidget#navigation::item {
@@ -48,19 +48,19 @@ QListWidget#navigation::item {
 }
 
 QListWidget#navigation::item:hover {
-    background: #1A425A;
-    color: #FFFFFF;
+    background: #EDF6F2;
+    color: #124D3E;
 }
 
 QListWidget#navigation::item:selected {
-    background: #E5F7F2;
-    color: #087A67;
+    background: #08775D;
+    color: #FFFFFF;
     font-weight: 700;
 }
 
 QLabel#heading {
-    color: #102A43;
-    font-size: 27px;
+    color: #172D27;
+    font-size: 25px;
     font-weight: 700;
 }
 
@@ -204,8 +204,8 @@ QTableWidget::item {
 }
 
 QHeaderView::section {
-    color: #526A7E;
-    background: #F2F6F9;
+    color: #253E36;
+    background: #EDF4F0;
     border: none;
     border-bottom: 1px solid #D8E2EA;
     padding: 9px 8px;
@@ -257,4 +257,32 @@ QPushButton#noteButton {
 QPushButton#noteButton:hover {
     background: #DDF3ED;
 }
+
+QFrame#sidebarSeparator { background: #E5ECE8; }
+QFrame#headingMarker { background: #08775D; border-radius: 2px; }
+QFrame#ledgerBanner {
+    border-radius: 10px;
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #F6F8F7,stop:0.65 #E7F3F2,stop:1 #F3F8F2);
+    min-height: 44px;
+}
+QFrame#mintSummary { background: #E8F6EF; border-radius: 10px; }
+QFrame#peachSummary { background: #FCF0EA; border-radius: 10px; }
+QFrame#blueSummary { background: #E8F2FD; border-radius: 10px; }
+QFrame#violetSummary { background: #F1EDFA; border-radius: 10px; }
+QLabel#ledgerMetricLabel { color: #223831; font-weight: 600; font-size: 13px; }
+QLabel#ledgerMetricValue { color: #132821; font-weight: 700; font-size: 19px; }
+QFrame#ledgerTableCard { background: white; border: 1px solid #E0E9E3; border-radius: 12px; }
+QTableWidget#ledgerTable { border: none; border-radius: 0; alternate-background-color: #FBFDFC; }
+QTableWidget#ledgerTable::item { padding: 3px; border-bottom: 1px solid #EDF2EF; }
+QTableWidget#ledgerTable::item:hover:!selected { background: #F0F8F4; }
+QTableWidget#ledgerTable QHeaderView::section { padding: 5px 2px; }
+QPushButton#rowAction {
+    padding: 0; min-height: 23px; border: none; background: transparent; border-radius: 4px;
+}
+QPushButton#rowAction:hover { background: #E3F3EC; }
+QMenu {
+    background: white; border: 1px solid #DDE7E2; padding: 4px; color: #243B33;
+}
+QMenu::item { padding: 7px 16px; }
+QMenu::item:selected { background: #E4F3EC; }
 """

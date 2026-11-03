@@ -142,13 +142,7 @@ def get_cash_totals(connection: sqlite3.Connection, ledger_id: str) -> CashTotal
     return CashTotals(ledger["opening_balance_cents"], row["income"], row["expense"])
 
 
-def list_transactions(
-    connection: sqlite3.Connection,
-    ledger_id: str,
-    filters: TransactionFilter | None = None,
-    *,
-    limit: int = 500,
-) -> list[sqlite3.Row]:
+def _transaction_conditions(ledger_id, filters):
     filters = filters or TransactionFilter()
     clauses = ["ledger_id = ?"]
     parameters: list[object] = [ledger_id]
@@ -182,15 +176,33 @@ def list_transactions(
         )
         pattern = f"%{_escape_like(filters.keyword.strip())}%"
         parameters.extend((pattern, pattern, pattern))
-    parameters.append(limit)
+    return " AND ".join(clauses), parameters
+
+
+def transaction_summary(connection, ledger_id, filters=None):
+    where, parameters = _transaction_conditions(ledger_id, filters)
+    row = connection.execute(
+        f"""SELECT COUNT(*) AS count,
+            COALESCE(SUM(CASE WHEN direction='income' THEN amount_cents ELSE 0 END), 0) AS income,
+            COALESCE(SUM(CASE WHEN direction='expense' THEN amount_cents ELSE 0 END), 0) AS expense
+            FROM transactions WHERE {where}""", parameters,
+    ).fetchone()
+    return row["income"], row["expense"], row["income"] - row["expense"], row["count"]
+
+
+def list_transactions(
+    connection: sqlite3.Connection, ledger_id: str, filters: TransactionFilter | None = None,
+    *, limit: int = 500, offset: int = 0,
+) -> list[sqlite3.Row]:
+    where, parameters = _transaction_conditions(ledger_id, filters)
     return list(
         connection.execute(
             f"""SELECT transactions.*,
                        (SELECT COUNT(*) FROM attachments a
                         WHERE a.entity_type='transaction' AND a.entity_id=transactions.id AND a.archived_at IS NULL) AS attachment_count
-                FROM transactions WHERE {' AND '.join(clauses)}
-                ORDER BY occurred_on DESC, created_at DESC LIMIT ?""",
-            parameters,
+                FROM transactions WHERE {where}
+                ORDER BY occurred_on DESC, created_at DESC, id DESC LIMIT ? OFFSET ?""",
+            (*parameters, limit, offset),
         )
     )
 
