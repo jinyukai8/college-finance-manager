@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
+from typing import Callable
 
 
 class AttachmentError(ValueError):
@@ -40,6 +41,7 @@ def import_attachment(
     entity_id: str,
     source_path: Path,
     max_size_bytes: int = 20 * 1024 * 1024,
+    on_import: Callable[[str], None] | None = None,
 ) -> str:
     source = source_path.resolve(strict=True)
     expected_type = _TYPES.get(source.suffix.lower())
@@ -74,8 +76,8 @@ def import_attachment(
     filename = attachment_id + source.suffix.lower()
     destination = root / filename
     temporary = root / (filename + ".tmp")
-    shutil.copyfile(source, temporary)
     try:
+        shutil.copyfile(source, temporary)
         connection.execute("BEGIN IMMEDIATE")
         os.replace(temporary, destination)
         connection.execute(
@@ -89,6 +91,8 @@ def import_attachment(
                 datetime.now().astimezone().isoformat(timespec="seconds"),
             ),
         )
+        if on_import is not None:
+            on_import(attachment_id)
         connection.commit()
         return attachment_id
     except Exception:

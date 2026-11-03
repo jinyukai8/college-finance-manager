@@ -23,13 +23,20 @@ def parse_yuan_to_cents(value: str, *, allow_zero: bool = False, allow_negative:
         raise InvalidMoney("金额格式无效") from exc
     if not amount.is_finite():
         raise InvalidMoney("金额必须是有限数值")
-    if amount.quantize(_CENT, rounding=ROUND_HALF_UP) != amount:
+    try:
+        quantized = amount.quantize(_CENT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise InvalidMoney("金额超出允许范围") from exc
+    if quantized != amount:
         raise InvalidMoney("金额最多保留两位小数")
     if not allow_negative and amount < 0:
         raise InvalidMoney("金额不能为负数")
     if not allow_zero and amount == 0:
         raise InvalidMoney("金额必须大于零")
-    return int(amount * 100)
+    cents = int(amount * 100)
+    if not -(2**63) <= cents < 2**63:
+        raise InvalidMoney("金额超出允许范围")
+    return cents
 
 
 def format_cents(cents: int) -> str:

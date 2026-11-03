@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QDate, QSize, Qt, Signal
+from PySide6.QtCore import QDate, QSize, QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -36,7 +36,8 @@ from college_finance_manager.application.initialize_ledger import (
     InitializeLedgerCommand,
     initialize_ledger,
 )
-from college_finance_manager.application.file_operations import add_attachment, export_filtered_transactions
+from college_finance_manager.application.file_operations import add_attachment, backup_before_change, export_filtered_transactions
+from college_finance_manager.application.record_management import edit_transaction
 from college_finance_manager.application.read_models import (
     get_dashboard_data,
     get_ledger,
@@ -60,6 +61,7 @@ from college_finance_manager.ui.theme import APP_STYLE_SHEET
 from college_finance_manager.ui.app_icon import create_app_icon
 from college_finance_manager.ui.file_drop_area import FileDropArea
 from college_finance_manager.ui.note_viewer import set_note_cell
+from college_finance_manager.ui.transaction_management import ReversalPage, TransactionDetailDialog, TransactionEditDialog
 from college_finance_manager.ui.operations_pages import (
     AdvancePage,
     AttachmentManagerDialog,
@@ -314,6 +316,8 @@ class CorrectTransactionDateDialog(QDialog):
 
 class TransactionPage(QWidget):
     changed = Signal()
+    INLINE_FIELDS = {1: "occurred_on", 3: "amount_cents", 5: "item", 6: "purpose", 10: "handler", 11: "payment_method"}
+    FORM_FIELDS = {2: "direction", 4: "category_id", 9: "note"}
 
     def __init__(self, connection: sqlite3.Connection, paths: AppPaths, ledger_id: str, parent=None) -> None:
         super().__init__(parent)
@@ -378,18 +382,24 @@ class TransactionPage(QWidget):
         filter_panel_layout.addLayout(advanced_filters)
         layout.addWidget(filter_panel)
 
-        self.table = QTableWidget(0, 10)
+        self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels(
-            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态", "备注")
+            ("编号", "日期", "类型", "金额", "类别", "物品", "用途/来源", "发票", "状态", "备注", "经办人", "支付方式")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+        self.table.itemChanged.connect(self._inline_changed)
+        self.table.cellDoubleClicked.connect(self._double_click_cell)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
         actions.addStretch()
+        for label, handler in (("详情", self._details), ("编辑", self._edit_selected)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
         correct_date_button = QPushButton("更正日期")
         correct_date_button.clicked.connect(self._correct_date)
         reverse_button = QPushButton("冲销所选")
@@ -440,6 +450,7 @@ class TransactionPage(QWidget):
                 keyword=self.keyword_filter.text(),
             ),
         )
+        blocker = QSignalBlocker(self.table)
         self.table.setRowCount(len(rows))
         direction_names = {"income": "收入", "expense": "支出"}
         status_names = {"active": "有效", "voided": "已作废", "reversed": "已冲销"}
@@ -450,13 +461,78 @@ class TransactionPage(QWidget):
                 row["item"] or "—", row["purpose"],
                 f"已提交（{row['attachment_count']}）" if row["attachment_count"] else "未提交",
                 status_names[row["status"]],
+                "", row["handler"] or "—", row["payment_method"] or "—",
             )
+            editable = row["source"] in {"direct", "correction"} and row["status"] == "active"
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
+                if not editable or column not in self.INLINE_FIELDS:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                else:
+                    item.setData(Qt.UserRole, str(value))
                 if column == 0:
                     item.setData(Qt.UserRole, row["id"])
                 self.table.setItem(index, column, item)
-            set_note_cell(self.table, index, 9, row["note"])
+            set_note_cell(self.table, index, 9, row["note"],
+                          (lambda tx=row["id"]: self._edit(tx, "note")) if editable else None)
+        del blocker
+
+    def _details(self) -> None:
+        if transaction_id := self._selected_id():
+            TransactionDetailDialog(self.connection, transaction_id, self, paths=self.paths).exec()
+
+    def _edit_selected(self) -> None:
+        if transaction_id := self._selected_id():
+            self._edit(transaction_id)
+
+    def _double_click_cell(self, row, column) -> None:
+        if column in self.FORM_FIELDS:
+            self._edit(self.table.item(row, 0).data(Qt.UserRole), self.FORM_FIELDS[column])
+        elif column in (0, 8):
+            TransactionDetailDialog(self.connection, self.table.item(row, 0).data(Qt.UserRole), self, paths=self.paths).exec()
+
+    def _edit(self, transaction_id, field=None) -> None:
+        row = get_transaction(self.connection, transaction_id)
+        if not row or row["source"] not in {"direct", "correction"} or row["status"] != "active":
+            QMessageBox.information(self, "不能编辑", "仅可编辑有效的直接收支；报销或预付款流水请通过对应业务处理。")
+            return
+        dialog = TransactionEditDialog(self.connection, row, field, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._save_edit(transaction_id, dialog.changes, dialog.reason.text())
+
+    def _inline_changed(self, item) -> None:
+        field = self.INLINE_FIELDS.get(item.column())
+        if field is None or not (item.flags() & Qt.ItemIsEditable) or item.text() == item.data(Qt.UserRole):
+            return
+        transaction_id = self.table.item(item.row(), 0).data(Qt.UserRole)
+        try:
+            value = item.text().strip()
+            if field == "amount_cents":
+                value = parse_yuan_to_cents(value)
+            elif field == "occurred_on":
+                value = date.fromisoformat(value)
+            elif field == "purpose" and not value:
+                raise ValueError("用途不能为空")
+        except ValueError as exc:
+            QMessageBox.warning(self, "输入无效", str(exc))
+            self.reload()
+            return
+        reason, accepted = QInputDialog.getText(
+            self, "确认保存更正", "填写修改原因。保存前会验证备份，原流水会保留：",
+        )
+        if accepted:
+            self._save_edit(transaction_id, {field: value}, reason)
+        else:
+            self.reload()
+
+    def _save_edit(self, transaction_id, changes, reason) -> None:
+        try:
+            edit_transaction(self.connection, self.paths, transaction_id, changes, reason)
+        except Exception as exc:
+            QMessageBox.critical(self, "更正失败", str(exc))
+        else:
+            self.changed.emit()
+        self.reload()
 
     def _selected_id(self) -> str | None:
         row = self.table.currentRow()
@@ -479,6 +555,7 @@ class TransactionPage(QWidget):
         if not accepted:
             return
         try:
+            backup_before_change(self.connection, self.paths)
             reverse_transaction(
                 self.connection, transaction_id, reason,
                 idempotency_key=str(uuid4()), occurred_on=date.today(),
@@ -501,6 +578,7 @@ class TransactionPage(QWidget):
         if dialog.exec() != QDialog.Accepted:
             return
         try:
+            backup_before_change(self.connection, self.paths)
             correct_transaction_date(
                 self.connection,
                 transaction_id,
@@ -522,6 +600,7 @@ class TransactionPage(QWidget):
         if not accepted:
             return
         try:
+            backup_before_change(self.connection, self.paths)
             void_unrealized_transaction(self.connection, transaction_id, reason)
         except Exception as exc:
             QMessageBox.critical(self, "作废失败", str(exc))
@@ -565,7 +644,7 @@ class TransactionPage(QWidget):
 
 
 class MainWindow(QMainWindow):
-    NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置", "回收站")
+    NAVIGATION = ("总览", "收支流水", "报销", "预付款", "报表", "设置", "回收站", "冲销记录")
 
     def __init__(
         self,
@@ -655,6 +734,9 @@ class MainWindow(QMainWindow):
             reimbursement_page.changed.connect(self.recycle_bin_page.reload)
             advance_page.changed.connect(self.recycle_bin_page.reload)
             self.pages.addWidget(self.recycle_bin_page)
+            reversal_page = ReversalPage(connection, ledger["id"], self, paths=paths)
+            self.transaction_page.changed.connect(reversal_page.reload)
+            self.pages.addWidget(reversal_page)
         else:
             for title in self.NAVIGATION[2:]:
                 self.pages.addWidget(self._build_placeholder(title))

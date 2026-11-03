@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QPlainTextEdit, QPushBu
 
 
 class NoteDialog(QDialog):
-    def __init__(self, note: str, parent=None) -> None:
+    def __init__(self, note: str, parent=None, editable=False) -> None:
         super().__init__(parent)
         self.setWindowTitle("查看备注")
         self.resize(560, 360)
@@ -16,11 +16,14 @@ class NoteDialog(QDialog):
         layout.addWidget(editor)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.button(QDialogButtonBox.Close).setText("关闭")
+        if editable:
+            edit = buttons.addButton("编辑备注", QDialogButtonBox.AcceptRole)
+            edit.clicked.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
 
-def set_note_cell(table: QTableWidget, row: int, column: int, note: str | None) -> None:
+def set_note_cell(table: QTableWidget, row: int, column: int, note: str | None, edit=None) -> None:
     """Keep full note text selectable in a read-only viewer without widening rows."""
     from PySide6.QtWidgets import QTableWidgetItem
 
@@ -35,5 +38,8 @@ def set_note_cell(table: QTableWidget, row: int, column: int, note: str | None) 
     button = QPushButton("查看")
     button.setObjectName("noteButton")
     button.setToolTip(note[:200] + ("…" if len(note) > 200 else ""))
-    button.clicked.connect(lambda _checked=False: NoteDialog(note, table).exec())
+    def open_note():
+        if NoteDialog(note, table, editable=edit is not None).exec() == QDialog.Accepted and edit:
+            edit()
+    button.clicked.connect(open_note)
     table.setCellWidget(row, column, button)

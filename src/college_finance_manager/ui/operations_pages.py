@@ -10,6 +10,7 @@ from PySide6.QtCore import QDate, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
@@ -37,6 +38,7 @@ from college_finance_manager.application.advances import (
 )
 from college_finance_manager.application.file_operations import (
     add_attachment,
+    change_attachment,
     create_manual_backup,
     export_attachment,
     export_report,
@@ -129,21 +131,27 @@ class BusinessEntryDialog(QDialog):
 
 
 class AttachmentManagerDialog(QDialog):
-    def __init__(self, connection, paths, ledger_id, entity_type, entity_id, parent=None) -> None:
+    def __init__(self, connection, paths, ledger_id, entity_type, entity_id, parent=None, *, read_only=False) -> None:
         super().__init__(parent)
         self.connection = connection
         self.paths = paths
         self.ledger_id = ledger_id
         self.entity_type = entity_type
         self.entity_id = entity_id
+        self.read_only = read_only
         self.setWindowTitle("凭证管理")
         self.resize(700, 420)
         layout = QVBoxLayout(self)
-        self.drop_area = FileDropArea("将发票/凭证文件拖到这里即可导入")
-        self.drop_area.files_dropped.connect(self._import_files)
-        layout.addWidget(self.drop_area)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(("文件名", "类型", "大小", "导入时间"))
+        if not read_only:
+            self.drop_area = FileDropArea("将发票/凭证文件拖到这里即可导入")
+            self.drop_area.files_dropped.connect(self._import_files)
+            layout.addWidget(self.drop_area)
+        self.show_archived = QCheckBox("显示已删除或替换的历史凭证")
+        self.show_archived.setChecked(read_only)
+        self.show_archived.toggled.connect(self.reload)
+        layout.addWidget(self.show_archived)
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(("文件名", "类型", "大小", "导入时间", "状态"))
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -155,7 +163,12 @@ class AttachmentManagerDialog(QDialog):
         open_button.clicked.connect(self._open)
         export_button = QPushButton("导出副本")
         export_button.clicked.connect(self._export)
-        actions.addWidget(add)
+        if not read_only:
+            actions.addWidget(add)
+            for label, handler in (("改名", self._rename), ("替换/重传", self._replace), ("删除", self._remove)):
+                button = QPushButton(label)
+                button.clicked.connect(handler)
+                actions.addWidget(button)
         actions.addStretch()
         actions.addWidget(open_button)
         actions.addWidget(export_button)
@@ -163,18 +176,60 @@ class AttachmentManagerDialog(QDialog):
         self.reload()
 
     def reload(self) -> None:
-        rows = list_attachments(self.connection, self.entity_type, self.entity_id)
+        rows = list_attachments(self.connection, self.entity_type, self.entity_id,
+                                include_archived=self.show_archived.isChecked(),
+                                include_historical_links=self.read_only)
         self.table.setRowCount(len(rows))
         for index, row in enumerate(rows):
-            values = (row["original_name"], row["media_type"], f"{row['size_bytes'] / 1024:.1f} KB", row["imported_at"])
+            values = (row["original_name"], row["media_type"], f"{row['size_bytes'] / 1024:.1f} KB",
+                      row["imported_at"], "已归档" if row["archived_at"] else
+                      ("历史关联" if row["entity_id"] != self.entity_id else "有效"))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 if column == 0:
                     item.setData(Qt.UserRole, row["id"])
+                    item.setData(Qt.UserRole + 1, bool(row["archived_at"]))
                 self.table.setItem(index, column, item)
 
     def _attachment_id(self) -> str | None:
         return _selected_id(self.table)
+
+    def _active_selection(self):
+        attachment_id = self._attachment_id()
+        if not attachment_id:
+            return None
+        item = self.table.item(self.table.currentRow(), 0)
+        if item.data(Qt.UserRole + 1):
+            QMessageBox.information(self, "历史凭证", "已归档的历史凭证仅供查看或导出。")
+            return None
+        return attachment_id, item.text()
+
+    def _modify(self, attachment_id, **changes):
+        try:
+            change_attachment(self.connection, self.paths, attachment_id, **changes)
+        except Exception as exc:
+            QMessageBox.warning(self, "凭证修改失败", str(exc))
+        self.reload()
+
+    def _rename(self):
+        if selected := self._active_selection():
+            attachment_id, current_name = selected
+            name, confirmed = QInputDialog.getText(self, "修改凭证名称", "文件名", text=current_name)
+            if confirmed and name != current_name:
+                self._modify(attachment_id, name=name)
+
+    def _replace(self):
+        if selected := self._active_selection():
+            attachment_id, name = selected
+            filename, _ = QFileDialog.getOpenFileName(self, f"替换 {name}", "", "凭证 (*.jpg *.jpeg *.png *.pdf)")
+            if filename:
+                self._modify(attachment_id, replacement=Path(filename))
+
+    def _remove(self):
+        if selected := self._active_selection():
+            attachment_id, name = selected
+            if QMessageBox.question(self, "删除所选凭证", f"从当前凭证列表移除「{name}」？原文件将归档保留。") == QMessageBox.Yes:
+                self._modify(attachment_id, remove=True)
 
     def _add(self) -> None:
         filenames, _ = QFileDialog.getOpenFileNames(self, "选择凭证", "", "凭证 (*.jpg *.jpeg *.png *.pdf)")

@@ -5,7 +5,9 @@ import shutil
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
+from uuid import uuid4
 
+from college_finance_manager.application.transactions import _audit, _now
 from college_finance_manager.infrastructure.attachments import import_attachment
 from college_finance_manager.infrastructure.backup import create_complete_backup, validate_backup
 from college_finance_manager.infrastructure.paths import AppPaths
@@ -29,6 +31,59 @@ def add_attachment(
         entity_id=entity_id,
         source_path=source_path,
     )
+
+
+def backup_before_change(connection: sqlite3.Connection, paths: AppPaths) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    destination = paths.backups / f"before-{stamp}-{uuid4().hex}.cfmbackup"
+    create_complete_backup(connection, attachments_root=paths.attachments, destination=destination)
+    validate_backup(destination)
+    return destination
+
+
+def change_attachment(connection, paths: AppPaths, attachment_id: str, *, name=None, replacement=None, remove=False):
+    if sum((name is not None, replacement is not None, bool(remove))) != 1:
+        raise ValueError("请选择一种凭证修改操作")
+    original = connection.execute(
+        "SELECT * FROM attachments WHERE id=? AND archived_at IS NULL", (attachment_id,)
+    ).fetchone()
+    if original is None:
+        raise ValueError("凭证不存在或已归档")
+    if name is not None:
+        name = name.strip()
+        if not name or any(c in name for c in '/\\<>:"|?*') or any(ord(c) < 32 for c in name):
+            raise ValueError("请输入有效文件名，不包含路径或特殊字符")
+        if Path(name).suffix.lower() != Path(original["internal_path"]).suffix.lower():
+            raise ValueError("修改名称时请保留文件扩展名")
+    backup_before_change(connection, paths)
+
+    def apply_change(new_id=None):
+        if name is not None:
+            cursor = connection.execute(
+                "UPDATE attachments SET original_name=? WHERE id=? AND archived_at IS NULL", (name, attachment_id)
+            )
+            action = "renamed"
+        else:
+            cursor = connection.execute(
+                "UPDATE attachments SET archived_at=? WHERE id=? AND archived_at IS NULL", (_now(), attachment_id)
+            )
+            action = "replaced" if new_id else "archived"
+        if cursor.rowcount != 1:
+            raise ValueError("凭证已被修改，请刷新后重试")
+        current = connection.execute("SELECT * FROM attachments WHERE id=?", (new_id or attachment_id,)).fetchone()
+        _audit(connection, original["ledger_id"], "attachment", attachment_id, action,
+               {"before": dict(original), "after": dict(current)})
+
+    if replacement is not None:
+        return import_attachment(
+            connection, attachments_root=paths.attachments, ledger_id=original["ledger_id"],
+            entity_type=original["entity_type"], entity_id=original["entity_id"],
+            source_path=replacement, on_import=apply_change,
+        )
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        apply_change()
+    return attachment_id
 
 
 def resolve_verified_attachment(

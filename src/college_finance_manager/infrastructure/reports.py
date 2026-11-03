@@ -37,7 +37,7 @@ def export_financial_report(
         connection.execute(
             """SELECT t.*,
                       (SELECT COUNT(*) FROM attachments a
-                       WHERE a.entity_type='transaction' AND a.entity_id=t.id) AS attachment_count
+                       WHERE a.entity_type='transaction' AND a.entity_id=t.id AND a.archived_at IS NULL) AS attachment_count
                FROM transactions t
                WHERE t.ledger_id = ? AND t.occurred_on BETWEEN ? AND ?
                ORDER BY occurred_on, transaction_no""",

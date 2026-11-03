@@ -187,7 +187,7 @@ def list_transactions(
         connection.execute(
             f"""SELECT transactions.*,
                        (SELECT COUNT(*) FROM attachments a
-                        WHERE a.entity_type='transaction' AND a.entity_id=transactions.id) AS attachment_count
+                        WHERE a.entity_type='transaction' AND a.entity_id=transactions.id AND a.archived_at IS NULL) AS attachment_count
                 FROM transactions WHERE {' AND '.join(clauses)}
                 ORDER BY occurred_on DESC, created_at DESC LIMIT ?""",
             parameters,
@@ -318,7 +318,16 @@ def correct_transaction_date(
     *,
     idempotency_key: str,
 ) -> str:
-    """Correct a direct transaction date without rewriting its history.
+    if type(new_date) is not date:
+        raise TransactionRuleError("更正日期无效")
+    return _correct_transaction(
+        connection, transaction_id, {"occurred_on": new_date}, reason,
+        idempotency_key=idempotency_key, date_only=True,
+    )
+
+
+def _correct_transaction(connection, transaction_id, changes, reason, *, idempotency_key, date_only=False):
+    """Correct a direct transaction without rewriting its historical values.
 
     The original is marked reversed, an equal and opposite record neutralizes it
     on its original date, and a linked correction recreates the cash effect on
@@ -327,12 +336,10 @@ def correct_transaction_date(
     """
     reason = reason.strip()
     idempotency_key = idempotency_key.strip()
-    if not isinstance(new_date, date):
-        raise TransactionRuleError("更正日期无效")
     if not reason:
-        raise TransactionRuleError("日期更正原因不能为空")
+        raise TransactionRuleError("更正原因不能为空")
     if not idempotency_key:
-        raise TransactionRuleError("日期更正必须提供幂等键")
+        raise TransactionRuleError("更正必须提供幂等键")
 
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -349,11 +356,36 @@ def correct_transaction_date(
         if not original:
             raise TransactionNotFound("原流水不存在")
         if original["status"] != "active" or original["source"] not in {"direct", "correction"}:
-            raise TransactionRuleError("仅有效的直接收支或更正流水可以修改日期")
-        if original["occurred_on"] == new_date.isoformat():
-            raise TransactionRuleError("新日期必须与原日期不同")
+            raise TransactionRuleError("仅有效的直接收支或更正流水可以编辑")
 
         ledger_id = original["ledger_id"]
+        fields = ("occurred_on", "direction", "amount_cents", "category_id", "purpose", "item", "handler", "payment_method", "note")
+        before = {field: original[field] for field in fields}
+        after = {**before, **changes}
+        if "occurred_on" in changes:
+            if type(after["occurred_on"]) is not date:
+                raise TransactionRuleError("日期无效")
+            after["occurred_on"] = after["occurred_on"].isoformat()
+        if type(after["amount_cents"]) is not int or not 0 < after["amount_cents"] <= 2**63 - 1:
+            raise TransactionRuleError("金额必须为有效的正数")
+        if after["direction"] not in {"income", "expense"} or not isinstance(after["purpose"], str) or not after["purpose"].strip():
+            raise TransactionRuleError("收支方向或用途无效")
+        for field in ("purpose", "item", "handler", "payment_method", "note"):
+            value = after[field]
+            if value is not None and not isinstance(value, str):
+                raise TransactionRuleError("文本字段格式无效")
+            after[field] = value.strip() or None if value is not None else None
+        if after == before:
+            raise TransactionRuleError("新日期必须与原日期不同" if date_only else "没有需要保存的修改")
+        category_name = original["category_name_snapshot"]
+        if after["category_id"] != before["category_id"] or after["direction"] != before["direction"]:
+            category = connection.execute(
+                "SELECT name FROM categories WHERE id=? AND ledger_id=? AND type=? AND is_active=1",
+                (after["category_id"], ledger_id, after["direction"]),
+            ).fetchone()
+            if not category:
+                raise TransactionRuleError("请选择与收支方向匹配的有效类别")
+            category_name = category["name"]
         now = _now()
         reversal_id = str(uuid4())
         reversal_number = _next_transaction_number(connection, ledger_id)
@@ -367,7 +399,7 @@ def correct_transaction_date(
             (
                 reversal_id, ledger_id, reversal_number, original["occurred_on"], reversal_direction,
                 original["amount_cents"], original["category_id"], original["category_name_snapshot"],
-                f"日期更正冲销 {original['transaction_no']}：{original['purpose']}", original["item"],
+                f"{'日期' if date_only else ''}更正冲销 {original['transaction_no']}：{original['purpose']}", original["item"],
                 original["handler"], original["payment_method"], reason, transaction_id,
                 f"{idempotency_key}:reversal", now, now,
             ),
@@ -382,15 +414,23 @@ def correct_transaction_date(
                 status, source, correction_of_id, idempotency_key, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'correction', ?, ?, ?, ?)""",
             (
-                correction_id, ledger_id, correction_number, new_date.isoformat(), original["direction"],
-                original["amount_cents"], original["category_id"], original["category_name_snapshot"],
-                original["purpose"], original["item"], original["handler"], original["payment_method"],
-                original["note"], transaction_id, idempotency_key, now, now,
+                correction_id, ledger_id, correction_number, after["occurred_on"], after["direction"],
+                after["amount_cents"], after["category_id"], category_name,
+                after["purpose"], after["item"], after["handler"], after["payment_method"],
+                after["note"], transaction_id, idempotency_key, now, now,
             ),
+        )
+        attachment_ids = [row["id"] for row in connection.execute(
+            "SELECT id FROM attachments WHERE entity_type='transaction' AND entity_id=? AND archived_at IS NULL",
+            (transaction_id,),
+        )]
+        connection.executemany(
+            "INSERT OR IGNORE INTO transaction_attachment_history(transaction_id, attachment_id) VALUES (?, ?)",
+            ((transaction_id, attachment_id) for attachment_id in attachment_ids),
         )
         moved_attachments = connection.execute(
             """UPDATE attachments SET entity_id = ?
-               WHERE entity_type = 'transaction' AND entity_id = ?""",
+               WHERE entity_type = 'transaction' AND entity_id = ? AND archived_at IS NULL""",
             (correction_id, transaction_id),
         ).rowcount
         connection.execute(
@@ -398,17 +438,19 @@ def correct_transaction_date(
             (now, transaction_id),
         )
         _audit(
-            connection, ledger_id, "transaction", transaction_id, "date_corrected",
+            connection, ledger_id, "transaction", transaction_id, "date_corrected" if date_only else "edited",
             {
-                "from": original["occurred_on"], "to": new_date.isoformat(),
+                "from": original["occurred_on"], "to": after["occurred_on"],
+                "before": {**before, "category_name": original["category_name_snapshot"]},
+                "after": {**after, "category_name": category_name},
                 "reversal_id": reversal_id, "correction_id": correction_id,
-                "moved_attachments": moved_attachments,
+                "moved_attachments": moved_attachments, "attachment_ids": attachment_ids,
             },
             reason,
         )
         _audit(
             connection, ledger_id, "transaction", reversal_id, "created",
-            {"source": "reversal", "original_id": transaction_id, "reason": "date_correction"},
+            {"source": "reversal", "original_id": transaction_id, "reason": "date_correction" if date_only else "edit"},
             reason,
         )
         _audit(

@@ -36,7 +36,7 @@ def test_initial_migration_creates_expected_tables_without_demo_data(database):
         for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert EXPECTED_TABLES <= tables
-    assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 3
+    assert database.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 4
     assert database.execute("SELECT count(*) FROM ledgers").fetchone()[0] == 0
     assert database.execute("SELECT count(*) FROM transactions").fetchone()[0] == 0
     columns = {row["name"] for row in database.execute("PRAGMA table_info(transactions)")}

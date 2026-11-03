@@ -15,6 +15,33 @@ def get_transaction(connection: sqlite3.Connection, transaction_id: str):
     ).fetchone()
 
 
+def list_reversals(connection: sqlite3.Connection, ledger_id: str):
+    return list(connection.execute(
+        """SELECT r.*, o.transaction_no AS original_no
+           FROM transactions r JOIN transactions o ON o.id=r.reversal_of_id
+           WHERE r.ledger_id=? AND r.source='reversal'
+           ORDER BY r.created_at DESC""", (ledger_id,),
+    ))
+
+
+def related_transactions(connection: sqlite3.Connection, transaction_id: str):
+    return list(connection.execute(
+        """SELECT t.* FROM transactions t JOIN transactions current ON current.id=?
+           WHERE t.ledger_id=current.ledger_id AND
+             (t.id IN (current.reversal_of_id, current.correction_of_id)
+              OR t.reversal_of_id=current.id OR t.correction_of_id=current.id)
+           ORDER BY t.created_at""", (transaction_id,),
+    ))
+
+
+def transaction_history(connection: sqlite3.Connection, transaction_id: str):
+    return list(connection.execute(
+        """SELECT action, reason, change_summary, created_at FROM audit_logs
+           WHERE entity_type='transaction' AND entity_id=? AND action IN ('edited','date_corrected','reversed')
+           ORDER BY created_at DESC""", (transaction_id,),
+    ))
+
+
 def list_categories(connection: sqlite3.Connection, ledger_id: str, category_type: str | None = None):
     sql = "SELECT id, type, name, is_active FROM categories WHERE ledger_id=?"
     parameters: list[object] = [ledger_id]
@@ -49,12 +76,18 @@ def list_advances(connection: sqlite3.Connection, ledger_id: str):
     )
 
 
-def list_attachments(connection: sqlite3.Connection, entity_type: str, entity_id: str):
+def list_attachments(connection: sqlite3.Connection, entity_type: str, entity_id: str, *,
+                     include_archived=False, include_historical_links=False):
     return list(
         connection.execute(
-            """SELECT id, original_name, internal_path, media_type, sha256, size_bytes, imported_at
-               FROM attachments WHERE entity_type=? AND entity_id=? ORDER BY imported_at DESC""",
-            (entity_type, entity_id),
+            """SELECT id, entity_id, original_name, internal_path, media_type, sha256, size_bytes, imported_at, archived_at
+               FROM attachments WHERE entity_type=?
+                 AND (entity_id=? OR (? AND entity_type='transaction' AND EXISTS (
+                     SELECT 1 FROM transaction_attachment_history h
+                     WHERE h.attachment_id=attachments.id AND h.transaction_id=?
+                 ))) AND (? OR archived_at IS NULL)
+               ORDER BY archived_at IS NOT NULL, imported_at DESC""",
+            (entity_type, entity_id, include_historical_links, entity_id, include_archived),
         )
     )
 
