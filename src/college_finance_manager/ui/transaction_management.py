@@ -3,7 +3,7 @@ from datetime import date
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
-    QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+    QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView,
 )
@@ -13,6 +13,7 @@ from college_finance_manager.application.read_models import (
 )
 from college_finance_manager.domain.money import format_cents, parse_yuan_to_cents
 from college_finance_manager.ui.operations_pages import AttachmentManagerDialog
+from college_finance_manager.ui.window_controls import LedgerComboBox as QComboBox, LedgerDateEdit as QDateEdit
 
 
 LABELS = {

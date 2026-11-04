@@ -5,17 +5,16 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QDate, QSize, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QDate, QEvent, QSize, QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QCheckBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -28,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSizeGrip,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -56,12 +56,13 @@ from college_finance_manager.application.transactions import (
     create_direct_transaction,
     get_cash_totals,
     list_transactions,
-    transaction_summary,
+    count_transactions,
     reverse_transaction,
     void_unrealized_transaction,
 )
 from college_finance_manager.infrastructure.paths import AppPaths
 from college_finance_manager.ui.theme import APP_STYLE_SHEET
+from college_finance_manager.ui.window_controls import LedgerComboBox as QComboBox, LedgerDateEdit as QDateEdit, LedgerMenuButton, WindowBar
 from college_finance_manager.ui.ledger_style import BadgeDelegate, campus_banner, ledger_icon
 from PySide6.QtGui import QColor
 from college_finance_manager.ui.app_icon import create_app_icon
@@ -354,36 +355,6 @@ class TransactionPage(QWidget):
         artwork.setPixmap(campus_banner())
         top.addWidget(artwork)
         layout.addWidget(banner)
-        metrics = QHBoxLayout()
-        metrics.setSpacing(10)
-        self.summary_values = []
-        for title, icon, color, tone in (
-            ("本期收入", "cash", "#08775D", "mint"), ("本期支出", "cash", "#C34A24", "peach"),
-            ("结余", "layers", "#245CB5", "blue"), ("记录总数", "file", "#6940B9", "violet"),
-        ):
-            card = QFrame()
-            card.setObjectName(tone + "Summary")
-            card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(10, 9, 10, 9)
-            card_layout.setSpacing(8)
-            symbol = QLabel()
-            symbol.setPixmap(ledger_icon(icon, color).pixmap(25, 25))
-            card_layout.addWidget(symbol)
-            copy = QVBoxLayout()
-            copy.setSpacing(2)
-            label = QLabel(title)
-            label.setObjectName("ledgerMetricLabel")
-            value = QLabel()
-            value.setObjectName("ledgerMetricValue")
-            value.setMinimumWidth(0)
-            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            copy.addWidget(label)
-            copy.addWidget(value)
-            card_layout.addLayout(copy, 1)
-            metrics.addWidget(card, 1)
-            self.summary_values.append(value)
-        layout.addLayout(metrics)
-
         filter_panel = QFrame()
         filter_panel.setObjectName("filterPanel")
         self._card_shadow(filter_panel)
@@ -463,7 +434,7 @@ class TransactionPage(QWidget):
         export_button.setIcon(ledger_icon("download"))
         export_button.clicked.connect(self._export)
         actions.addWidget(export_button)
-        batch_button = QPushButton("批量操作")
+        batch_button = LedgerMenuButton("批量操作")
         batch_button.setIcon(ledger_icon("layers"))
         batch_menu = QMenu(batch_button)
         batch_menu.addAction("勾选本页全部", lambda: self._check_page(True))
@@ -471,7 +442,7 @@ class TransactionPage(QWidget):
         batch_menu.addAction("导出勾选的支出", self._export_selected)
         batch_button.setMenu(batch_menu)
         actions.addWidget(batch_button)
-        more_button = QPushButton("流水操作")
+        more_button = LedgerMenuButton("流水操作")
         more_menu = QMenu(more_button)
         for label, handler in (
             ("详情", self._details), ("编辑", self._edit_selected), ("更正日期", self._correct_date),
@@ -498,7 +469,7 @@ class TransactionPage(QWidget):
         header = self.table.horizontalHeader()
         header.setMinimumSectionSize(22)
         header.setSectionResizeMode(QHeaderView.Fixed)
-        for column, width in enumerate((96, 84, 41, 72, 62, 48, 92, 66, 43, 44, 51, 66, 24)):
+        for column, width in enumerate((96, 84, 41, 72, 62, 48, 92, 66, 43, 58, 51, 66, 24)):
             self.table.setColumnWidth(column, width)
         header.setSectionResizeMode(5, QHeaderView.Stretch)
         header.moveSection(header.visualIndex(self.SELECT_COLUMN), 0)
@@ -597,13 +568,7 @@ class TransactionPage(QWidget):
         self.reload()
 
     def reload(self) -> None:
-        income, expense, net, self._count = transaction_summary(self.connection, self.ledger_id, self._filters)
-        for label, amount in zip(self.summary_values[:3], (income, expense, net)):
-            whole, fractional = format_cents(amount).split(".")
-            value = f"¥ {'-' if whole.startswith('-') else ''}{abs(int(whole)):,}.{fractional}"
-            label.setText(value)
-            label.setToolTip(value)
-        self.summary_values[3].setText(f"{self._count:,} 条")
+        self._count = count_transactions(self.connection, self.ledger_id, self._filters)
         size = self.page_size.currentData()
         pages = max(1, (self._count + size - 1) // size)
         self._page = min(max(0, self._page), pages - 1)
@@ -672,7 +637,7 @@ class TransactionPage(QWidget):
         action()
 
     def _selection_count(self):
-        self.result_count.setText(f"共 {self._count:,} 条记录，已勾选 {len(self._checked_rows())} 条")
+        self.result_count.setText(f"共 {self._count:,} 条记录，已选择 {len(self._checked_rows())} 条")
 
     def _checked_rows(self):
         return [row for index, row in enumerate(self._page_rows)
@@ -872,6 +837,7 @@ class MainWindow(QMainWindow):
         self.paths = paths
         self.setWindowTitle("实验室账本")
         self.setWindowIcon(create_app_icon())
+        self.setWindowFlag(Qt.FramelessWindowHint)
         self.setMinimumSize(1024, 680)
         container = QWidget()
         container.setObjectName("appRoot")
@@ -966,9 +932,25 @@ class MainWindow(QMainWindow):
         self.navigation.setCurrentRow(0)
         root.addWidget(self.sidebar)
         root.addWidget(self.pages, 1)
-        self.setCentralWidget(container)
+        shell = QWidget()
+        shell.setObjectName("appRoot")
+        chrome = QGridLayout(shell)
+        chrome.setContentsMargins(0, 0, 0, 0)
+        chrome.setSpacing(0)
+        self.window_bar = WindowBar(self)
+        chrome.addWidget(self.window_bar, 0, 0)
+        chrome.addWidget(container, 1, 0)
+        self.resize_grip = QSizeGrip(shell)
+        chrome.addWidget(self.resize_grip, 1, 0, Qt.AlignRight | Qt.AlignBottom)
+        self.setCentralWidget(shell)
         self._configure_tables()
         self.setStyleSheet(APP_STYLE_SHEET)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "window_bar"):
+            self.window_bar.sync()
+            self.resize_grip.setVisible(not (self.isMaximized() or self.isFullScreen()))
 
     def _navigate(self, index):
         if index < 0:

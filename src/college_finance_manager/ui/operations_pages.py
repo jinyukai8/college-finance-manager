@@ -9,9 +9,7 @@ from uuid import uuid4
 from PySide6.QtCore import QDate, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox,
     QCheckBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -72,6 +70,7 @@ from college_finance_manager.domain.money import format_cents, parse_yuan_to_cen
 from college_finance_manager.infrastructure.paths import AppPaths
 from college_finance_manager.ui.file_drop_area import FileDropArea
 from college_finance_manager.ui.note_viewer import set_note_cell
+from college_finance_manager.ui.window_controls import LedgerDateEdit as QDateEdit
 
 
 def _heading(text: str) -> QLabel:

@@ -248,7 +248,7 @@ QFrame#fileDropArea[dragActive="true"] {
 
 QPushButton#noteButton {
     min-height: 28px;
-    padding: 0 10px;
+    padding: 0 2px;
     color: #087A67;
     border: none;
     background: transparent;
@@ -265,12 +265,17 @@ QFrame#ledgerBanner {
     background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #F6F8F7,stop:0.65 #E7F3F2,stop:1 #F3F8F2);
     min-height: 44px;
 }
-QFrame#mintSummary { background: #E8F6EF; border-radius: 10px; }
-QFrame#peachSummary { background: #FCF0EA; border-radius: 10px; }
-QFrame#blueSummary { background: #E8F2FD; border-radius: 10px; }
-QFrame#violetSummary { background: #F1EDFA; border-radius: 10px; }
-QLabel#ledgerMetricLabel { color: #223831; font-weight: 600; font-size: 13px; }
-QLabel#ledgerMetricValue { color: #132821; font-weight: 700; font-size: 19px; }
+QComboBox[ledgerChevron="true"]::down-arrow, QDateEdit[ledgerChevron="true"]::down-arrow,
+QPushButton[ledgerChevron="true"]::menu-indicator { image: none; width: 0; height: 0; }
+QComboBox[ledgerChevron="true"], QDateEdit[ledgerChevron="true"],
+QPushButton[ledgerChevron="true"] { padding-right: 26px; }
+QWidget#windowBar { background: #F6F8F7; border-bottom: 1px solid #E4EBE7; }
+QPushButton#windowControl, QPushButton#windowCloseButton {
+    min-height: 0; padding: 0; border: none; border-radius: 0;
+    background: transparent; color: #253E36; font-size: 16px; font-weight: 400;
+}
+QPushButton#windowControl:hover { background: #E4EFEA; }
+QPushButton#windowCloseButton:hover { background: #BD3633; color: white; }
 QFrame#ledgerTableCard { background: white; border: 1px solid #E0E9E3; border-radius: 12px; }
 QTableWidget#ledgerTable { border: none; border-radius: 0; alternate-background-color: #FBFDFC; }
 QTableWidget#ledgerTable::item { padding: 3px; border-bottom: 1px solid #EDF2EF; }

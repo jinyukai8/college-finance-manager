@@ -179,15 +179,11 @@ def _transaction_conditions(ledger_id, filters):
     return " AND ".join(clauses), parameters
 
 
-def transaction_summary(connection, ledger_id, filters=None):
+def count_transactions(connection, ledger_id, filters=None):
     where, parameters = _transaction_conditions(ledger_id, filters)
-    row = connection.execute(
-        f"""SELECT COUNT(*) AS count,
-            COALESCE(SUM(CASE WHEN direction='income' THEN amount_cents ELSE 0 END), 0) AS income,
-            COALESCE(SUM(CASE WHEN direction='expense' THEN amount_cents ELSE 0 END), 0) AS expense
-            FROM transactions WHERE {where}""", parameters,
-    ).fetchone()
-    return row["income"], row["expense"], row["income"] - row["expense"], row["count"]
+    return connection.execute(
+        f"SELECT COUNT(*) FROM transactions WHERE {where}", parameters,
+    ).fetchone()[0]
 
 
 def list_transactions(
