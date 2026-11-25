@@ -1,31 +1,50 @@
 param(
-    [string]$DeployRoot = "D:\CollegeFinanceManager"
+    [string]$DeployRoot = (Join-Path $PSScriptRoot "..\build\windows"),
+    [string]$CompilerPath
 )
 
 $ErrorActionPreference = "Stop"
 $SourceRoot = Split-Path -Parent $PSScriptRoot
+$DeployRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DeployRoot)
+$InstallerScript = Join-Path $SourceRoot "installer\CollegeFinanceManager.iss"
+
+if ($CompilerPath) {
+    $Compiler = (Resolve-Path -LiteralPath $CompilerPath).ProviderPath
+}
+else {
+    $Candidates = @(
+        Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty Source
+        foreach ($Folder in "ProgramFilesX86", "ProgramFiles") {
+            $ProgramFilesDir = [Environment]::GetFolderPath($Folder)
+            if ($ProgramFilesDir) { Join-Path $ProgramFilesDir "Inno Setup 6\ISCC.exe" }
+        }
+    )
+    $Compiler = $Candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
+    if (-not $Compiler) {
+        throw "Inno Setup 6 was not found. Specify the full ISCC.exe path with -CompilerPath."
+    }
+}
 
 & (Join-Path $PSScriptRoot "build_windows.ps1") -DeployRoot $DeployRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "Application build failed with exit code $LASTEXITCODE"
+$ApplicationDir = Join-Path $DeployRoot "dist\CollegeFinanceManager"
+$InstallerDir = Join-Path $DeployRoot "installer"
+$BuildTemp = Join-Path $DeployRoot "build\tmp"
+New-Item -ItemType Directory -Force -Path $InstallerDir, $BuildTemp | Out-Null
+$PreviousBuildTemp = $env:TEMP
+$PreviousBuildTmp = $env:TMP
+try {
+    $env:TEMP = $BuildTemp
+    $env:TMP = $BuildTemp
+    & $Compiler "/DBuildSourceDir=$ApplicationDir" "/DInstallerOutputDir=$InstallerDir" $InstallerScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Installer build failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    $env:TEMP = $PreviousBuildTemp
+    $env:TMP = $PreviousBuildTmp
 }
 
-$Candidates = @(
-    (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
-    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    "C:\Program Files\Inno Setup 6\ISCC.exe",
-    "D:\Inno Setup 6\ISCC.exe"
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
-
-$Compiler = $Candidates | Select-Object -First 1
-if (-not $Compiler) {
-    throw "Inno Setup 6 was not found. Install it before running this script."
-}
-
-New-Item -ItemType Directory -Force -Path (Join-Path $DeployRoot "installer") | Out-Null
-& $Compiler (Join-Path $SourceRoot "installer\CollegeFinanceManager.iss")
-if ($LASTEXITCODE -ne 0) {
-    throw "Installer build failed with exit code $LASTEXITCODE"
-}
-
-Write-Host "Installer created: $DeployRoot\installer\CollegeFinanceManager-Setup-0.4.9.exe"
+Write-Host "Installer output directory: $InstallerDir"

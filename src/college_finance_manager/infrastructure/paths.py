@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import os
+from configparser import ConfigParser, Error as ConfigError
 from dataclasses import dataclass
 from pathlib import Path
 
 
-APP_DIRECTORY_NAME = "CollegeFinanceManager"
+INSTALL_CONFIG = "ledger-paths.ini"
+INSTALL_REGISTRY_KEY = r"Software\jinyukai8\LaboratoryLedger"
+
+
+class DataDirectoryError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +42,62 @@ class AppPaths:
         self.logs.mkdir(exist_ok=True)
 
 
-def default_app_paths() -> AppPaths:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise RuntimeError("未找到 LOCALAPPDATA，拒绝猜测正式数据目录")
-    return AppPaths.from_root(Path(local_app_data) / APP_DIRECTORY_NAME)
+def _legacy_installed_data_dir() -> str | None:
+    if os.name != "nt":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, INSTALL_REGISTRY_KEY) as key:
+            value, kind = winreg.QueryValueEx(key, "DataDir")
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise DataDirectoryError("无法读取先前安装保存的账本目录") from exc
+    if kind == winreg.REG_EXPAND_SZ:
+        value = winreg.ExpandEnvironmentStrings(value)
+    if kind not in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) or not value.strip():
+        raise DataDirectoryError("先前安装保存的账本目录无效")
+    return value
+
+
+def _installed_data_dir(executable: Path) -> Path | None:
+    config_path = executable.parent / INSTALL_CONFIG
+    try:
+        raw = config_path.read_bytes()
+    except FileNotFoundError:
+        raw = None
+    except OSError as exc:
+        raise DataDirectoryError(f"无法读取安装配置：{config_path}") from exc
+    if raw is None:
+        legacy = _legacy_installed_data_dir()
+        if legacy is None:
+            return None
+        directory = Path(legacy)
+        if not directory.is_absolute():
+            raise DataDirectoryError(f"先前安装保存的账本目录无效：{legacy}")
+        return directory
+    parser = ConfigParser(interpolation=None)
+    try:
+        encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+        parser.read_string(raw.decode(encoding))
+        directory = parser.get("Paths", "DataDir").strip()
+        if not directory:
+            raise ValueError("DataDir is empty")
+    except (ConfigError, ValueError) as exc:
+        raise DataDirectoryError(f"安装配置中的账本目录无效：{config_path}") from exc
+    return executable.parent / Path(directory)
+
+
+def resolve_startup_paths(data_dir: Path | None = None, *, executable: Path | None = None) -> AppPaths | None:
+    """Resolve a startup directory without falling back to an unrelated ledger."""
+    if data_dir is not None:
+        return AppPaths.from_root(data_dir)
+    if executable is None:
+        return None
+    configured = _installed_data_dir(executable)
+    if configured is None:
+        return None
+    if not configured.is_dir():
+        raise DataDirectoryError(f"已配置的账本目录不可用：{configured}")
+    return AppPaths.from_root(configured)
